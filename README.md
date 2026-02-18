@@ -1,6 +1,6 @@
 # ESP32-intercom
 
-MCU Intercom hpf/a2dp
+MCU Intercom hpf/a2dp Iphone
 
 esp32 library ver 2.0.17
 
