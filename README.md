@@ -1,6 +1,7 @@
 # ESP32-Intercom: Bluetooth A2DP & HFP for iPhone
 
 A high-fidelity Bluetooth audio system using Dual-Profile handshaking (Music & Calls).
+
 📖 Overview
 
 This project implements a dual-profile Bluetooth system on the ESP32, specifically optimized for iPhone integration. It enables high-quality music streaming via A2DP and seamless switching to duplex voice communication via HFP (Hands-Free Profile).
