@@ -1,7 +1,7 @@
 /* * -------------------------------------------------------------------------------
  * PROJECT: Open-Source Pro-Intercom MCU System
- * VERSION: 2.2.0 (Stable Build)
- * DESCRIPTION: Dual-profile (A2DP & HFP) with robust Serial initialization.
+ * VERSION: 2.3.0 (Latency Debug Build)
+ * DESCRIPTION: Dual-profile (A2DP & HFP) with Real-time Latency Tracking
  * -------------------------------------------------------------------------------
  */
 
@@ -19,14 +19,15 @@ BluetoothSerial SerialBT;
 #define I2S_NUM           I2S_NUM_0
 #define I2S_BCK_IO        26
 #define I2S_WS_IO         25
-#define I2S_DO_IO         22  // Output to Speaker/DAC
-#define I2S_DI_IO         35  // Input from I2S Microphone
+#define I2S_DO_IO         22 
+#define I2S_DI_IO         35 
 
-// --- GLOBAL STATE ---
+// --- STATE & LATENCY TRACKING ---
 bool isCallActive = false;
 bool isMediaStreaming = false;
+unsigned long transitionStartTime = 0;
 
-// --- AUDIO STREAM CALLBACKS ---
+// --- AUDIO CALLBACKS ---
 
 void hf_incoming_data_cb(const uint8_t *data, uint32_t len) {
     size_t bytes_written;
@@ -44,46 +45,63 @@ void a2dp_sink_data_cb(const uint8_t *data, uint32_t len) {
     i2s_write(I2S_NUM, data, len, &bytes_written, portMAX_DELAY);
 }
 
-// --- EVENT HANDLERS ---
+// --- EVENT HANDLERS WITH LATENCY MEASUREMENT ---
 
 void hf_client_event_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param) {
-    if (event == 0) { // Connection State
-        if (param->conn_stat.state == 1) Serial.println("[STATUS] HFP: Connected");
-    } 
-    else if (event == 2) { // Audio State
-        if (param->audio_stat.state == 2) {
-            isCallActive = true;
-            Serial.println("[EVENT] MODE: VOICE_CALL_ACTIVE");
+    // Event 3: Call Indicators (Battery, Signal, Call Status)
+    if (event == 3) {
+        // Status 1 = Call is officially active on the iPhone
+        if (param->call.status == 1) {
+            if (!isCallActive) {
+                transitionStartTime = millis(); // Start latency timer
+                Serial.println("[HFP] Call Detected! Waiting for audio channel (SCO)...");
+            }
+            isCallActive = true; 
         } else {
             isCallActive = false;
-            Serial.println("[EVENT] MODE: VOICE_CALL_IDLE");
+            Serial.println("[HFP] Call Terminated.");
+        }
+    }
+    
+    // Event 2: Audio State (The actual "pipe" for your voice)
+    else if (event == 2) { 
+        if (param->audio_stat.state == 2) { // 2 = Audio Connected (SCO)
+            unsigned long latency = millis() - transitionStartTime;
+            Serial.print("[LATENCY] Call Signaling to Audio Link: ");
+            Serial.print(latency);
+            Serial.println(" ms");
+            Serial.println("[EVENT] MODE: VOICE_CALL_AUDIO_READY");
+        } else if (param->audio_stat.state == 0) {
+            Serial.println("[EVENT] MODE: VOICE_CALL_AUDIO_DISCONNECTED");
         }
     }
 }
 
 void a2dp_sink_event_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
-    if (event == 0) { // Connection State
-        if (param->conn_stat.state == 2) Serial.println("[STATUS] A2DP: Connected");
-    }
-    else if (event == 1) { // Audio State
+    // Event 1 = Audio State Change
+    if (event == 1) {
         if (param->audio_stat.state == 2) {
+            unsigned long latency = millis() - transitionStartTime;
             isMediaStreaming = true;
+            Serial.print("[LATENCY] A2DP Media Stream Setup: ");
+            Serial.print(latency);
+            Serial.println(" ms");
             Serial.println("[EVENT] MODE: MEDIA_STREAMING_STARTED");
         } else {
             isMediaStreaming = false;
+            transitionStartTime = millis(); // Start timer for next play command
             Serial.println("[EVENT] MODE: MEDIA_STREAMING_PAUSED");
         }
     }
 }
 
 void setup() {
-    // Robust Serial Init
     Serial.begin(115200);
-    while(!Serial && millis() < 3000); // Wait for Serial to initialize
+    while(!Serial && millis() < 3000);
     delay(500); 
 
-    Serial.println("\n\n###########################################");
-    Serial.println("#     INTERCOM SYSTEM INITIALIZING...     #");
+    Serial.println("\n###########################################");
+    Serial.println("#     INTERCOM SYSTEM - LATENCY DEBUG     #");
     Serial.println("###########################################");
 
     // 1. Setup I2S
@@ -101,21 +119,18 @@ void setup() {
     i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
 
     i2s_pin_config_t pin_config = {
-        .bck_io_num = I2S_BCK_IO,
-        .ws_io_num = I2S_WS_IO,
-        .data_out_num = I2S_DO_IO,
-        .data_in_num = I2S_DI_IO
+        .bck_io_num = I2S_BCK_IO, .ws_io_num = I2S_WS_IO,
+        .data_out_num = I2S_DO_IO, .data_in_num = I2S_DI_IO
     };
     i2s_set_pin(I2S_NUM, &pin_config);
 
     // 2. Start Bluetooth
-    Serial.println("[INIT] Booting BT Controller...");
     if (!SerialBT.begin("esp_intercom")) {
-        Serial.println("[FATAL] BT Hardware Init Failed");
+        Serial.println("[FATAL] BT Hardware Error");
         while (1);
     }
 
-    // 3. Set Device Identity
+    // 3. Set Identity
     esp_bt_cod_t cod;
     cod.major = 0x04; cod.minor = 0x08; 
     esp_bt_gap_set_cod(cod, ESP_BT_SET_COD_ALL);
@@ -131,16 +146,16 @@ void setup() {
 
     // 5. Visibility
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
-    Serial.println("[SUCCESS] System Ready. Awaiting connection...");
+    Serial.println("[SUCCESS] Pro-Intercom Online.");
 }
 
 void loop() {
     static unsigned long lastMsg = 0;
     if (millis() - lastMsg > 5000) {
         lastMsg = millis();
-        Serial.print("[INFO] Device Name: esp_intercom | State: ");
-        if (isCallActive) Serial.println("VOICE CALL");
-        else if (isMediaStreaming) Serial.println("MEDIA PLAYBACK");
+        Serial.print("[STATUS] Ready | Active Profile: ");
+        if (isCallActive) Serial.println("CALL");
+        else if (isMediaStreaming) Serial.println("MEDIA");
         else Serial.println("IDLE");
     }
 }
