@@ -1,80 +1,77 @@
-# ESP32-Intercom: Bluetooth A2DP & HFP for iPhone
+# ESP32 Intercom
 
-A high-fidelity Bluetooth audio system using Dual-Profile handshaking (Music & Calls).
+Single-sketch ESP32 firmware for Bluetooth A2DP sink (music) and HFP client
+(calls), with runtime I2S clock switching between media and call audio.
 
-📖 Overview
+## Project Status
 
-This project implements a dual-profile Bluetooth system on the ESP32, specifically optimized for iPhone integration. It enables high-quality music streaming via A2DP and seamless switching to duplex voice communication via HFP (Hands-Free Profile).
+The codebase was unified into one production sketch:
 
-Technical Implementation Summary
-"The system utilizes a state-driven event handler to manage the transition between Bluetooth A2DP and HFP profiles. By intercepting low-level protocol events (SCO/ACL), the firmware dynamically reconfigures the I2S hardware clock frequency in real-time. This ensures synchronization between the MCU's internal DAC/ADC and the iPhone's variable sample rates (switching from 44.1kHz stereo media to 16kHz mono wideband speech), effectively eliminating digital pitch-shift and latency jitter during profile handovers."
+- `esp_intercom.ino` is the only file intended to be flashed.
+- The repository now only keeps source code, `README.md`, and `LICENSE`.
 
-By utilizing digital I2S communication, it bypasses the internal 8-bit DAC of the ESP32 to provide professional-grade audio fidelity for DIY helmet intercoms or hands-free systems.
-✨ Key Features
+## Repository Layout
 
-    Dual-Profile Handshaking: Automatic switching between A2DP (Media) and HFP (Voice/Calls).
+- `esp_intercom.ino`: production firmware.
+- `README.md`: project documentation.
+- `LICENSE`: MIT license text.
 
-    Dynamic I2S Clock Scaling: Real-time hardware re-syncing between 44.1kHz (Music) and 16kHz (Wideband Speech).
+## Features
 
-    Full-Duplex Audio: Simultaneous high-quality speaker output and digital microphone input.
+- A2DP sink playback over I2S (44.1 kHz stereo).
+- HFP full-duplex call path over I2S:
+  - narrowband CVSD: 8 kHz mono
+  - wideband mSBC: 16 kHz mono
+- Event-driven mode transitions with serial logs for status and latency.
+- Non-blocking I2S callback path to reduce Bluetooth task starvation.
+- NVS initialization for Bluetooth pairing persistence.
+- Startup error handling with explicit failure logs.
 
-    Persistence: Bluetooth Link Keys stored in NVS (Non-Volatile Storage) for reliable auto-reconnection.
+## Hardware
 
-    Latency Debugging: Built-in real-time monitoring of profile transition speeds.
+Recommended modules:
 
-🛠 Hardware Setup
+- ESP32-WROOM-32
+- MAX98357A (I2S DAC/amp output)
+- INMP441 (I2S microphone input)
 
-To ensure digital audio quality, the following I2S components are recommended:
-Component	Purpose	Recommended Model
-MCU	Main Controller	ESP32-WROOM-32
-DAC / Amp	Audio Output	MAX98357A
-Microphone	Audio Input	INMP441 (Digital I2S)
-Pin Mapping
+Pin map:
 
-    BCLK (Bit Clock): GPIO 26
+- `BCLK`: GPIO 26
+- `WS/LRCK`: GPIO 25
+- `DATA_OUT` (to DAC): GPIO 22
+- `DATA_IN` (from mic): GPIO 35
 
-    LRCK / WS (Word Select): GPIO 25
+## Software Requirements
 
-    DIN (Data Out to Speaker): GPIO 22
+- Arduino ESP32 Core `2.0.17`
+- Partition scheme: `Huge APP` (or equivalent)
 
-    DOUT (Data In from Mic): GPIO 35
+No third-party audio libraries are required by the current sketch.
 
-💻 Software Requirements
+## Flashing
 
-    Arduino ESP32 Core: v2.0.17 (Stable)
+1. Open this folder as an Arduino sketch.
+2. Ensure the board is an ESP32 target compatible with Classic Bluetooth.
+3. Build and upload `esp_intercom.ino`.
+4. Open serial monitor at `115200`.
+5. Pair with device name `esp_intercom`.
 
-    Partition Scheme: "Huge APP" or similar (to accommodate the Bluetooth stack)
+## Serial Log Signals
 
-Dependencies
+- `[STATUS]` profile connection state changes
+- `[EVENT]` media/call mode transitions
+- `[LATENCY]` transition timing
+- `[INFO]` heartbeat with active mode and callback drop/pad counters
+- `[ERROR]` initialization/runtime API failures
+- `[FATAL]` unrecoverable startup failure
 
-    ESP32-A2DP by pschatzmann
+## Known Limits
 
-    Arduino-Audio-Tools
+- This project has not been validated against all phones/headsets.
+- Without hardware-in-loop tests, latency and duplex quality are unverified.
+- Discoverability is currently left enabled continuously.
 
-🚀 Installation
+## License
 
-    Set up your Arduino IDE for ESP32 (version 2.0.17).
-
-    Install the required libraries listed under Dependencies.
-
-    Flash the esp_intercom.ino sketch.
-
-    Open the Serial Monitor at 115200 baud.
-
-    Search for esp_intercom on your iPhone and pair.
-
-📡 System Status Logs
-
-The firmware provides real-time feedback via the Serial Monitor:
-
-    [STATUS]: Connection handshakes and profile readiness.
-
-    [EVENT]: Profile transitions (e.g., from Media to Voice).
-
-    [LATENCY]: Timing data for profile switching (measured in ms).
-
-    [INFO]: Heartbeat monitor showing current active mode.
-
-📄 License
-
-Distributed under the MIT License. See LICENSE for more information.
+MIT. See `LICENSE`.
