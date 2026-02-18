@@ -48,35 +48,25 @@ void a2dp_sink_data_cb(const uint8_t *data, uint32_t len) {
 // --- EVENT HANDLERS WITH LATENCY MEASUREMENT ---
 
 void hf_client_event_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param) {
-    // Event 3: Call Indicators (Battery, Signal, Call Status)
-    if (event == 3) {
-        // Status 1 = Call is officially active on the iPhone
-        if (param->call.status == 1) {
-            if (!isCallActive) {
-                transitionStartTime = millis(); // Start latency timer
-                Serial.println("[HFP] Call Detected! Waiting for audio channel (SCO)...");
-            }
-            isCallActive = true; 
+    // Event 2 = Audio State Change (SCO Link)
+    if (event == 2) { 
+        if (param->audio_stat.state == 2) { // Samtal anslutet
+            isCallActive = true;
+            
+            // Vi växlar klockan till 16 kHz, 16-bit, Mono (standard för HFP Wideband)
+            i2s_set_clk(I2S_NUM, 16000, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
+            
+            Serial.println("[SYSTEM] I2S Hardware: Switched to 16kHz Mono (Voice)");
         } else {
             isCallActive = false;
-            Serial.println("[HFP] Call Terminated.");
-        }
-    }
-    
-    // Event 2: Audio State (The actual "pipe" for your voice)
-    else if (event == 2) { 
-        if (param->audio_stat.state == 2) { // 2 = Audio Connected (SCO)
-            unsigned long latency = millis() - transitionStartTime;
-            Serial.print("[LATENCY] Call Signaling to Audio Link: ");
-            Serial.print(latency);
-            Serial.println(" ms");
-            Serial.println("[EVENT] MODE: VOICE_CALL_AUDIO_READY");
-        } else if (param->audio_stat.state == 0) {
-            Serial.println("[EVENT] MODE: VOICE_CALL_AUDIO_DISCONNECTED");
+            
+            // Växla tillbaka till 44.1 kHz, 16-bit, Stereo för musik
+            i2s_set_clk(I2S_NUM, 44100, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+            
+            Serial.println("[SYSTEM] I2S Hardware: Switched to 44.1kHz Stereo (Music)");
         }
     }
 }
-
 void a2dp_sink_event_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
     // Event 1 = Audio State Change
     if (event == 1) {
