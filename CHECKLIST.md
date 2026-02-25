@@ -1,56 +1,76 @@
 # ESP32 Intercom v1 Checklist (Living)
 
-Status summary: GREEN 47 | YELLOW 0 | PENDING-DEVICE 26 | RED 0
+Status summary: hardware-verified items remain `PENDING-DEVICE` until validated on real BOM hardware.
 
 Status legend:
-- `GREEN`: implemented with direct evidence in repo (and host-test where applicable); may still note pending on-device validation
-- `YELLOW`: partially implemented or ambiguous evidence; not used for the current v1 implementation posture
-- `RED`: currently blocked or missing
+- `GREEN`: implemented with direct evidence in repo (and host-test where applicable)
+- `YELLOW`: partially implemented or ambiguous evidence
+- `RED`: blocked or missing
 - `PENDING-DEVICE`: requires physical BOM execution, runtime-duration test, or measured on-device evidence
+
+## Preflight (Must Run Before Device Acceptance)
+
+| ID | Status | Evidence / Notes |
+|---|---|---|
+| PF-HFP-001 | GREEN | `esp32_intercom.ino` uses compile-time guard for `esp_hf_client_api.h` and explicitly reports blocked status when unavailable. |
+| PF-HFP-002 | PENDING-DEVICE | Boot log on target must explicitly show `HFP-TOOLCHAIN` status (`ok` or `blocked`) and be saved with test artifact. |
+| PF-BOM-001 | PENDING-DEVICE | Verify PAM8403 analog input wiring: ESP32 DAC pin (GPIO25) -> PAM8403 input, shared ground, and correct amp supply rail. |
+| PF-BOM-002 | PENDING-DEVICE | Verify slide switch wiring uses SPDT center-common pin to GPIO or rail as expected by chosen function. |
+| PF-BOM-003 | PENDING-DEVICE | Verify tactile switch pin pairing (diagonal continuity pair) before wiring to GPIO; avoid same-side short assumptions. |
+| PF-BOM-004 | PENDING-DEVICE | Verify common-cathode dual-color LED wiring uses separate current-limiting resistor per color channel. |
+| PF-BOM-005 | PENDING-DEVICE | Verify LiPo/USB/jumper/power routing so amplifier and ESP32 rails are valid and no back-power condition exists. |
+| PF-BOM-006 | PENDING-DEVICE | Verify speaker safety setup: 8Ω 0.5W speaker load, conservative initial volume, and no sustained overdrive behavior. |
 
 ## FR (Functional Requirements)
 
 | ID | Status | Evidence / Notes |
 |---|---|---|
 | FR-BOOT-001 | GREEN | `state_machine.h` initializes to `IDLE`; `setup()` sets mode `IDLE`. |
-| FR-BOOT-002 | GREEN | `initBluetoothOrHalt()` calls discoverable/connectable during boot and tolerates already-initialized BT states; pending on-device validation. |
-| FR-PAIR-001 | GREEN | Classic BT pairing flow enabled with GAP pin config; pending on-device validation. |
-| FR-PAIR-002 | GREEN | Uses default stack bonding persistence; pending on-device validation across reboot. |
-| FR-PAIR-003 | GREEN | Bonding kept by default; reconnect behavior implemented, pending on-device validation against phone/stack behavior. |
-| FR-PAIR-004 | GREEN | Discoverable/connectable restored on disconnect + periodic refresh in loop; pending on-device validation. |
-| FR-MUSIC-001 | GREEN | A2DP sink init and callbacks implemented in `esp32_intercom.ino`; pending on-device validation. |
-| FR-MUSIC-002 | GREEN | A2DP PCM callback streams to I2S with gain control; pending on-device validation. |
-| FR-MUSIC-003 | GREEN | AVRCP absolute-volume clamp path implemented plus RN volume capability/interim/changed responses (guarded for core compatibility); pending on-device validation. |
-| FR-MUSIC-004 | GREEN | A2DP audio stop/suspend clears `music_active` -> `IDLE` via arbiter; pending on-device validation. |
-| FR-CALL-001 | GREEN | HFP client callback/data path implemented with compile-time availability guard; pending on-device validation. |
-| FR-CALL-002 | GREEN | HFP incoming audio -> I2S output path implemented; pending on-device validation. |
-| FR-CALL-003 | GREEN | ADC mic sampling -> HFP outgoing PCM implemented; pending on-device validation. |
-| FR-CALL-004 | GREEN | Call mode enters/exits by event-driven arbitration; pending on-device validation. |
+| FR-BOOT-002 | PENDING-DEVICE | `initBluetoothOrHalt()` enables discoverable/connectable; timing and runtime confirmation require hardware. |
+| FR-PAIR-001 | PENDING-DEVICE | Classic BT pairing flow enabled with GAP pin config; must be verified on phone(s). |
+| FR-PAIR-002 | PENDING-DEVICE | Default stack bonding persistence path exists; reboot persistence requires hardware run. |
+| FR-PAIR-003 | PENDING-DEVICE | Reconnect behavior implemented; phone/stack behavior must be measured on device. |
+| FR-PAIR-004 | PENDING-DEVICE | Discoverable/connectable restore path implemented; manual reconnection behavior pending hardware validation. |
+| FR-MUSIC-001 | PENDING-DEVICE | A2DP sink init and callbacks implemented in `esp32_intercom.ino`; end-to-end proof pending device. |
+| FR-MUSIC-002 | PENDING-DEVICE | A2DP PCM now routes to analog DAC output backend (PAM8403-compatible direction); audible validation pending device. |
+| FR-MUSIC-003 | PENDING-DEVICE | AVRCP absolute-volume clamp path implemented; monotonic loudness must be validated on hardware. |
+| FR-MUSIC-004 | PENDING-DEVICE | A2DP stop/suspend clears `music_active` -> `IDLE`; runtime proof pending device. |
+| FR-CALL-001 | PENDING-DEVICE | HFP client path present with explicit toolchain block handling; full-duplex validation pending device. |
+| FR-CALL-002 | PENDING-DEVICE | HFP incoming audio routes to analog output backend; audibility validation pending device. |
+| FR-CALL-003 | PENDING-DEVICE | ADC mic sampling -> HFP outgoing PCM implemented; call intelligibility pending device. |
+| FR-CALL-004 | PENDING-DEVICE | Call mode enters/exits by event-driven arbitration; runtime validation pending device. |
 | FR-MODE-001 | GREEN | Exactly `IDLE/MUSIC/CALL` in shared `state_machine.h`. |
 | FR-MODE-002 | GREEN | `resolveMode()` always prioritizes call over music; host-tested. |
 | FR-MODE-003 | GREEN | On call end returns to music-if-active else idle; host-tested. |
-| FR-MODE-004 | GREEN | Deterministic shared arbiter with host-tested transitions; runtime inputs now use derived `source_connected = (A2DP || HFP)` to avoid false mode drops; pending on-device validation. |
-| FR-FMT-001 | GREEN | Music output config set to 44.1 kHz stereo I2S path; pending on-device validation. |
-| FR-FMT-002 | GREEN | Call output switches I2S to 16 kHz; HFP mic uplink is mono PCM from ADC; pending on-device validation. |
-| FR-FMT-003 | GREEN | Automatic mode-triggered sample-rate switching in transition handler; pending on-device validation. |
-| FR-FMT-004 | GREEN | Call exit transitions reapply music format; pending on-device validation. |
-| FR-REC-001 | GREEN | Link-state tracking split across A2DP/HFP with derived source connectivity; disconnect-to-`IDLE` timing (<3s) pending on-device validation. |
-| FR-REC-002 | GREEN | Reconnect-ready mode kept by discoverable/connectable refresh policy and disconnect callbacks; pending on-device validation. |
-| FR-REC-003 | GREEN | Recoverable warnings/disconnect reasons logged and discoverable restore attempted; pending on-device validation under repeated failures. |
+| FR-MODE-004 | GREEN | Deterministic shared arbiter with host-tested transitions and derived `source_connected = (A2DP || HFP)`. |
+| FR-FMT-001 | PENDING-DEVICE | Music-mode source compatibility target retained (44.1k input); rendered through analog DAC backend with downsample strategy; must be validated audibly. |
+| FR-FMT-002 | PENDING-DEVICE | Call-mode source compatibility target retained (16k mono input); rendered through analog DAC backend; must be validated audibly. |
+| FR-FMT-003 | GREEN | Mode-triggered output-rate target updates are automatic in transition handler. |
+| FR-FMT-004 | GREEN | Call exit transitions restore music-rate target automatically. |
+| FR-REC-001 | PENDING-DEVICE | Disconnect-to-`IDLE` target requires measured runtime validation. |
+| FR-REC-002 | PENDING-DEVICE | Reconnect-ready policy is implemented; needs device validation. |
+| FR-REC-003 | PENDING-DEVICE | Recoverable warnings and discoverable restore are logged; repeated-failure behavior pending device tests. |
 | FR-OBS-001 | GREEN | Startup/connect/disconnect/mode transition logs implemented. |
 | FR-OBS-002 | GREEN | Transition direction strings (`IDLE->MUSIC`, etc.) emitted. |
 | FR-OBS-003 | GREEN | Recoverable `WARN` logging without halt implemented. |
 | FR-OBS-004 | GREEN | Stable `FATAL-xxx` startup codes + halt path implemented. |
-| FR-OBS-005 | GREEN | 10s heartbeat (`HB ...`) implemented in loop. |
+| FR-OBS-005 | GREEN | 10s heartbeat (`HB ...`) implemented in loop and now includes output/HFP/low-battery status fields. |
+| FR-BLOCK-001 | GREEN | Boot/runtime logs explicitly report HFP toolchain blocked/ok state. |
+| FR-BLOCK-002 | GREEN | Missing HFP headers force blocked status and disable call-path claim. |
+| FR-BLOCK-003 | GREEN | Boot/runtime logs explicitly report analog output path status (`analog-ok` or `blocked`). |
+| FR-BLOCK-004 | GREEN | Checklist policy keeps blocked capabilities out of pass claims. |
+| FR-PWR-001 | GREEN | Power/jumper caveats captured in `PROJECT_SPEC.md` and `README.md`. |
+| FR-PWR-002 | PENDING-DEVICE | Low-battery protection behavior is implemented behind configurable VBAT ADC wiring; threshold behavior needs bench validation. |
+| FR-PWR-003 | GREEN | If VBAT ADC wiring is absent, firmware logs explicit low-battery blocked status. |
 
 ## UX (User-Facing Requirements)
 
 | ID | Status | Evidence / Notes |
 |---|---|---|
-| UX-001 | GREEN | Intended standard BT settings pairing path is implemented; pending on-device validation on iOS/Android. |
-| UX-002 | GREEN | Stable build-time device name constant plus explicit hands-free/audio CoD setup (guarded by available core APIs); pending on-device validation across reboot. |
-| UX-003 | GREEN | Phone-native play/pause/call events drive arbitration automatically; pending on-device validation. |
-| UX-004 | GREEN | Recoverable path documented + boot-hold bond clear policy + logs implemented; pending on-device validation. |
+| UX-001 | PENDING-DEVICE | Standard Bluetooth pairing path intended; must be validated on iOS/Android. |
+| UX-002 | PENDING-DEVICE | Stable build-time name and CoD setup implemented; reboot consistency pending device validation. |
+| UX-003 | PENDING-DEVICE | Phone-native play/pause/call events drive arbitration automatically; pending device validation. |
+| UX-004 | PENDING-DEVICE | Recoverable path documented + boot-hold bond clear policy + logs implemented; pending device validation. |
 
 ## NFR (Non-Functional Requirements)
 
@@ -78,9 +98,9 @@ Status legend:
 | EC-004 | GREEN | Host assertion validates disconnect during call forces idle safely. |
 | EC-005 | GREEN | Host assertion validates disconnect during music forces idle safely. |
 | EC-006 | GREEN | Host rapid-event assertion sequence validates no invalid/deadlocked mode. |
-| EC-007 | GREEN | Volume clamp + ramp + transition-safe gain updates implemented; pending on-device validation under stress. |
-| EC-008 | GREEN | Bond persistence path implemented via default stack; pending on-device reboot/reconnect validation. |
-| EC-009 | GREEN | Deterministic policy implemented: keep latest auth bond, clear older bonds; pending on-device validation. |
+| EC-007 | PENDING-DEVICE | Volume clamp + ramp + transition-safe gain updates implemented; stress validation pending on-device. |
+| EC-008 | PENDING-DEVICE | Bond persistence path implemented via default stack; pending reboot/reconnect validation. |
+| EC-009 | PENDING-DEVICE | Deterministic single-bond policy implemented; pending on-device validation. |
 
 ## ACC (Acceptance)
 
@@ -88,7 +108,7 @@ Status legend:
 |---|---|---|
 | ACC-001 | PENDING-DEVICE | Requires live phone pairing demo and log evidence. |
 | ACC-002 | PENDING-DEVICE | Requires 30-minute music end-to-end run. |
-| ACC-003 | PENDING-DEVICE | Requires 15-minute full-duplex call run. |
+| ACC-003 | PENDING-DEVICE | Requires 15-minute full-duplex call run (or explicit HFP-toolchain blocked record). |
 | ACC-004 | PENDING-DEVICE | Requires >=20 successful handovers without reboot. |
 | ACC-005 | PENDING-DEVICE | Requires 4/5 post-reboot reconnect pass metric capture. |
 | ACC-006 | PENDING-DEVICE | Requires disconnect recovery run and idle/reconnect-ready confirmation. |
@@ -96,6 +116,7 @@ Status legend:
 | ACC-008 | PENDING-DEVICE | Requires 2-hour mixed-use validation with no unresolved fatal errors. |
 | ACC-009 | PENDING-DEVICE | Requires manual execution + records for all Section 8 edge cases. |
 | ACC-010 | PENDING-DEVICE | Requires per-run hardware audit that only approved BOM was used. |
+| ACC-011 | PENDING-DEVICE | Requires explicit preflight record of HFP availability, analog output wiring confirmation, and low-battery/jumper caveat status. |
 
 ## TM (Test Matrix)
 
@@ -111,7 +132,12 @@ Status legend:
 
 | ID | Status | Evidence / Notes |
 |---|---|---|
-| HW-001 | PENDING-DEVICE | Firmware/docs remain BOM-locked and test log template includes BOM audit checklist; pending bench build and per-run audit evidence. |
+| HW-001 | PENDING-DEVICE | Firmware/docs remain BOM-locked; bench build and per-run audit evidence still required. |
 | HW-002 | GREEN | No extra hardware dependencies introduced in code/docs. |
-| HW-003 | GREEN | Single-speaker operation supported as baseline; second speaker optional; pending on-device validation. |
-| HW-004 | GREEN | Optional controls/indicators limited to available switches + dual-color LEDs. |
+| HW-003 | PENDING-DEVICE | Single-speaker baseline kept; needs on-device confirmation for real loudness/thermal behavior. |
+| HW-004 | PENDING-DEVICE | Optional controls/indicators limited to listed switch/LED parts; physical wiring audit pending. |
+| HW-005 | PENDING-DEVICE | Firmware output backend now targets analog DAC path for PAM8403 compatibility; physical wiring/audio validation pending. |
+| HW-006 | GREEN | HFP toolchain precondition + blocked-status handling implemented explicitly in firmware logs/checklist. |
+| HW-007 | PENDING-DEVICE | SPDT/tactile/CC-LED wiring assumptions require bench continuity and assembly validation. |
+| HW-008 | PENDING-DEVICE | Battery/jumper caveats require physical power-path validation. |
+| HW-009 | PENDING-DEVICE | Safe speaker-power behavior requires measured validation on 0.5W speakers. |

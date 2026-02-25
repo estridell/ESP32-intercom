@@ -5,7 +5,12 @@
 
 extern "C" {
 #include "driver/adc.h"
-#include "driver/i2s.h"
+#if __has_include("driver/dac.h")
+#include "driver/dac.h"
+#define HAVE_ANALOG_DAC 1
+#else
+#define HAVE_ANALOG_DAC 0
+#endif
 #include "esp_a2dp_api.h"
 #include "esp_avrc_api.h"
 #include "esp_bt.h"
@@ -24,7 +29,7 @@ extern "C" {
 
 // -------------------------- Build-time configuration --------------------------
 static constexpr const char *kDeviceName = "ESP32-Intercom-v1";
-static constexpr uint8_t kSafeMaxVolumeAbs = 96;      // 0..127 AVRCP scale
+static constexpr uint8_t kSafeMaxVolumeAbs = 72;      // 0..127 AVRCP scale (0.5W speaker safety clamp)
 static constexpr uint8_t kDefaultVolumeAbs = 64;      // startup target (clamped)
 static constexpr uint32_t kHeartbeatMs = 10000;
 static constexpr uint32_t kDiscoverableRefreshMs = 15000;
@@ -33,21 +38,22 @@ static constexpr uint32_t kStartupMuteMs = 300;
 static constexpr int32_t kRampStepQ15 = 256;          // gain ramp step per loop
 
 // Practical default wiring pins for ESP32-WROOM-32 DevKit.
-static constexpr gpio_num_t PIN_I2S_BCLK = GPIO_NUM_26;
-static constexpr gpio_num_t PIN_I2S_WS = GPIO_NUM_25;
-static constexpr gpio_num_t PIN_I2S_DOUT = GPIO_NUM_22;
+static constexpr int PIN_SPKR_DAC = 25;               // DAC1 / GPIO25 -> PAM8403 IN
 static constexpr int PIN_MIC_ADC = 34;                // ADC1_CH6
+static constexpr int PIN_BAT_ADC = -1;                // set to ADC pin if divider/jumper is wired
 static constexpr int PIN_BOND_CLEAR_BUTTON = 33;      // active LOW
 static constexpr int PIN_LED_RED = 18;                // active HIGH
 static constexpr int PIN_LED_GREEN = 19;              // active HIGH
 
-static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 static constexpr uint32_t kMusicSampleRate = 44100;
 static constexpr uint32_t kCallSampleRate = 16000;
+static constexpr uint8_t kMusicDownsampleFactor = 4;  // effective write pacing for software DAC path
+static constexpr uint8_t kCallDownsampleFactor = 2;
+static constexpr uint16_t kLowBatteryMillivolts = 3400;
 
 enum class FatalCode {
   NVS_INIT = 1,
-  I2S_INIT = 2,
+  AUDIO_INIT = 2,
   BT_CTRL_INIT = 3,
   BT_CTRL_ENABLE = 4,
   BLUEDROID_INIT = 5,
@@ -78,7 +84,13 @@ static bool gShouldClearBonds = false;
 static uint32_t gBootMs = 0;
 static uint32_t gLastHeartbeat = 0;
 static uint32_t gLastDiscoverableRefresh = 0;
-static uint32_t gCurrentI2sRate = kMusicSampleRate;
+static uint32_t gCurrentOutputRate = kMusicSampleRate;
+static bool gOutputPathReady = false;
+static bool gOutputPathBlocked = false;
+static bool gHfpPathBlocked = false;
+static bool gLowBatteryFeatureBlocked = false;
+static bool gLowBatteryWarningLatched = false;
+static uint32_t gLastLowBatteryLogMs = 0;
 
 // -------------------------- Utilities --------------------------
 static void fatalHalt(FatalCode code, const char *detail) {
@@ -306,60 +318,30 @@ static void configureAvrcpVolumeNotificationCapability() {
 }
 
 // -------------------------- Audio path --------------------------
-static bool initI2S() {
-  const i2s_config_t i2s_config = {
-      .mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_TX),
-      .sample_rate = static_cast<int>(kMusicSampleRate),
-      .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-      .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-      .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-      .intr_alloc_flags = 0,
-      .dma_buf_count = 8,
-      .dma_buf_len = 256,
-      .use_apll = false,
-      .tx_desc_auto_clear = true,
-      .fixed_mclk = 0,
-  };
-
-  const i2s_pin_config_t pin_config = {
-      .bck_io_num = PIN_I2S_BCLK,
-      .ws_io_num = PIN_I2S_WS,
-      .data_out_num = PIN_I2S_DOUT,
-      .data_in_num = I2S_PIN_NO_CHANGE,
-  };
-
-  esp_err_t err = i2s_driver_install(kI2sPort, &i2s_config, 0, nullptr);
+static bool initAudioOutputPath() {
+#if HAVE_ANALOG_DAC
+  const esp_err_t err = dac_output_enable(DAC_CHANNEL_1);
   if (err != ESP_OK) {
-    logRecoverable("i2s_driver_install", err);
+    logRecoverable("dac_output_enable", err);
+    gOutputPathBlocked = true;
     return false;
   }
-
-  err = i2s_set_pin(kI2sPort, &pin_config);
-  if (err != ESP_OK) {
-    logRecoverable("i2s_set_pin", err);
-    return false;
-  }
-
-  err = i2s_set_clk(kI2sPort, kMusicSampleRate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
-  if (err != ESP_OK) {
-    logRecoverable("i2s_set_clk", err);
-    return false;
-  }
-
-  gCurrentI2sRate = kMusicSampleRate;
-  i2s_zero_dma_buffer(kI2sPort);
+  dac_output_voltage(DAC_CHANNEL_1, 128);
+  gCurrentOutputRate = kMusicSampleRate;
+  gOutputPathReady = true;
+  Serial.printf("AUDIO output=analog_dac gpio=%d target=PAM8403_in\n", PIN_SPKR_DAC);
   return true;
+#else
+  Serial.println("BLOCKED OUTPUT-PATH analog DAC API unavailable in this core build");
+  gOutputPathBlocked = true;
+  return false;
+#endif
 }
 
-static void setI2sRate(uint32_t sampleRate) {
-  if (sampleRate == gCurrentI2sRate) return;
-  const esp_err_t err = i2s_set_clk(kI2sPort, sampleRate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
-  if (err != ESP_OK) {
-    logRecoverable("i2s_set_clk_runtime", err);
-    return;
-  }
-  gCurrentI2sRate = sampleRate;
-  Serial.printf("AUDIO i2s sample rate -> %lu\n", static_cast<unsigned long>(sampleRate));
+static void setOutputRate(uint32_t sampleRate) {
+  if (sampleRate == gCurrentOutputRate) return;
+  gCurrentOutputRate = sampleRate;
+  Serial.printf("AUDIO analog target sample rate -> %lu\n", static_cast<unsigned long>(sampleRate));
 }
 
 static inline int16_t applyGainQ15(int16_t sample, int32_t gainQ15) {
@@ -369,12 +351,96 @@ static inline int16_t applyGainQ15(int16_t sample, int32_t gainQ15) {
   return static_cast<int16_t>(scaled);
 }
 
-static void writeI2S16(const int16_t *samples, size_t sampleCount) {
-  if (sampleCount == 0) return;
-  size_t written = 0;
-  const esp_err_t err = i2s_write(kI2sPort, samples, sampleCount * sizeof(int16_t), &written, 0);
-  if (err != ESP_OK) {
-    logRecoverable("i2s_write", err);
+static uint8_t pcm16ToDac8(int16_t sample) {
+  const int32_t shifted = (static_cast<int32_t>(sample) + 32768) >> 8;
+  if (shifted < 0) return 0;
+  if (shifted > 255) return 255;
+  return static_cast<uint8_t>(shifted);
+}
+
+static inline void writeAnalogSample(int16_t sample) {
+  if (!gOutputPathReady) return;
+#if HAVE_ANALOG_DAC
+  dac_output_voltage(DAC_CHANNEL_1, pcm16ToDac8(sample));
+#else
+  (void)sample;
+#endif
+}
+
+static void writeAnalogStereoPcm(const int16_t *samples, size_t sampleCount, int32_t gainQ15) {
+  if (!samples || sampleCount < 2 || !gOutputPathReady) return;
+
+  static uint8_t decim = 0;
+  for (size_t i = 0; i + 1 < sampleCount; i += 2) {
+    const int16_t l = applyGainQ15(samples[i], gainQ15);
+    const int16_t r = applyGainQ15(samples[i + 1], gainQ15);
+    const int16_t mono = static_cast<int16_t>((static_cast<int32_t>(l) + static_cast<int32_t>(r)) / 2);
+    decim++;
+    if (decim >= kMusicDownsampleFactor) {
+      decim = 0;
+      writeAnalogSample(mono);
+    }
+  }
+}
+
+static void writeAnalogMonoPcm(const int16_t *samples, size_t sampleCount, int32_t gainQ15) {
+  if (!samples || sampleCount == 0 || !gOutputPathReady) return;
+
+  static uint8_t decim = 0;
+  for (size_t i = 0; i < sampleCount; ++i) {
+    const int16_t s = applyGainQ15(samples[i], gainQ15);
+    decim++;
+    if (decim >= kCallDownsampleFactor) {
+      decim = 0;
+      writeAnalogSample(s);
+    }
+  }
+}
+
+static void silenceAudioOutput() {
+#if HAVE_ANALOG_DAC
+  if (gOutputPathReady) {
+    dac_output_voltage(DAC_CHANNEL_1, 128);
+  }
+#endif
+}
+
+static int readBatteryMillivolts() {
+  if (PIN_BAT_ADC < 0) return -1;
+  const int raw = analogRead(PIN_BAT_ADC);
+  // Placeholder conversion for a future resistor-divider wiring; tune from bench measurements.
+  return (raw * 4200) / 4095;
+}
+
+static void updateLowBatteryProtection() {
+  const int batteryMv = readBatteryMillivolts();
+  if (batteryMv < 0) {
+    if (!gLowBatteryFeatureBlocked) {
+      gLowBatteryFeatureBlocked = true;
+      Serial.println("BLOCKED LOW-BATTERY no VBAT ADC wiring configured; protection pending-device");
+    }
+    return;
+  }
+
+  if (batteryMv <= static_cast<int>(kLowBatteryMillivolts)) {
+    if (!gLowBatteryWarningLatched) {
+      gLowBatteryWarningLatched = true;
+      setCallActive(false);
+      setMusicActive(false);
+      setTargetVolume(24, "low_battery_guard");
+    }
+    const uint32_t now = millis();
+    if (now - gLastLowBatteryLogMs >= 5000) {
+      gLastLowBatteryLogMs = now;
+      Serial.printf("WARN LOW-BATTERY %dmV <= %umV, forcing IDLE\n",
+                    batteryMv,
+                    static_cast<unsigned>(kLowBatteryMillivolts));
+    }
+  } else if (batteryMv > static_cast<int>(kLowBatteryMillivolts + 150)) {
+    if (gLowBatteryWarningLatched) {
+      Serial.printf("INFO LOW-BATTERY cleared %dmV\n", batteryMv);
+    }
+    gLowBatteryWarningLatched = false;
   }
 }
 
@@ -451,17 +517,7 @@ static void a2dpDataCallback(const uint8_t *data, uint32_t len) {
 
   const int16_t *in = reinterpret_cast<const int16_t *>(data);
   const size_t totalSamples = len / sizeof(int16_t);
-  static int16_t work[256];
-
-  size_t offset = 0;
-  while (offset < totalSamples) {
-    const size_t chunk = (totalSamples - offset > 256) ? 256 : (totalSamples - offset);
-    for (size_t i = 0; i < chunk; ++i) {
-      work[i] = applyGainQ15(in[offset + i], gainQ15);
-    }
-    writeI2S16(work, chunk);
-    offset += chunk;
-  }
+  writeAnalogStereoPcm(in, totalSamples, gainQ15);
 }
 
 static void a2dpEventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param) {
@@ -567,22 +623,10 @@ static void hfpIncomingAudioCallback(const uint8_t *buf, uint32_t len) {
   gainQ15 = gCurrentGainQ15;
   portEXIT_CRITICAL_ISR(&gMux);
 
-  // HFP payload is treated as mono 16-bit PCM and duplicated to stereo for the I2S amp path.
+  // HFP payload is mono 16-bit PCM; routed to analog output path for PAM8403 input stage.
   const int16_t *inMono = reinterpret_cast<const int16_t *>(buf);
   const size_t monoSamples = len / sizeof(int16_t);
-  static int16_t stereo[256];
-
-  size_t index = 0;
-  while (index < monoSamples) {
-    const size_t frames = (monoSamples - index > 128) ? 128 : (monoSamples - index);
-    for (size_t i = 0; i < frames; ++i) {
-      const int16_t s = applyGainQ15(inMono[index + i], gainQ15);
-      stereo[i * 2] = s;
-      stereo[i * 2 + 1] = s;
-    }
-    writeI2S16(stereo, frames * 2);
-    index += frames;
-  }
+  writeAnalogMonoPcm(inMono, monoSamples, gainQ15);
 }
 
 static uint32_t hfpOutgoingAudioCallback(uint8_t *buf, uint32_t len) {
@@ -747,6 +791,7 @@ static void initBluetoothOrHalt() {
   configureAvrcpVolumeNotificationCapability();
 
 #if HAVE_HFP_CLIENT
+  gHfpPathBlocked = false;
   err = esp_hf_client_register_callback(hfpClientCallback);
   if (!okOrAlreadyInitialized("esp_hf_client_register_callback", err)) {
     fatalHalt(FatalCode::HFP_INIT, "hfp_register_callback");
@@ -760,7 +805,8 @@ static void initBluetoothOrHalt() {
     fatalHalt(FatalCode::HFP_INIT, "hfp_init");
   }
 #else
-  Serial.println("WARN HFP client headers unavailable in this core build; call path cannot be enabled.");
+  gHfpPathBlocked = true;
+  Serial.println("BLOCKED HFP-TOOLCHAIN missing esp_hf_client_api.h; call path disabled");
 #endif
 
   setDiscoverableConnectable();
@@ -775,14 +821,14 @@ static void handleModeTransition(const ModeTransition &t) {
 
   switch (t.to) {
     case AudioMode::CALL:
-      setI2sRate(kCallSampleRate);
+      setOutputRate(kCallSampleRate);
       break;
     case AudioMode::MUSIC:
-      setI2sRate(kMusicSampleRate);
+      setOutputRate(kMusicSampleRate);
       break;
     case AudioMode::IDLE:
     default:
-      i2s_zero_dma_buffer(kI2sPort);
+      silenceAudioOutput();
       break;
   }
 }
@@ -827,13 +873,16 @@ static void heartbeatLog() {
   gLastHeartbeat = now;
 
   ModeInputs in = snapshotInputs();
-  Serial.printf("HB mode=%s src=%d music=%d call=%d vol=%u gainQ15=%ld\n",
+  Serial.printf("HB mode=%s src=%d music=%d call=%d vol=%u gainQ15=%ld out=%s hfp=%s lowbat=%s\n",
                 modeToString(getActiveMode()),
                 static_cast<int>(in.source_connected),
                 static_cast<int>(in.music_active),
                 static_cast<int>(in.call_active),
                 static_cast<unsigned>(gVolumeAbs),
-                static_cast<long>(gCurrentGainQ15));
+                static_cast<long>(gCurrentGainQ15),
+                gOutputPathReady ? "analog-ok" : (gOutputPathBlocked ? "blocked" : "init-pending"),
+                gHfpPathBlocked ? "blocked" : "ok",
+                gLowBatteryFeatureBlocked ? "blocked" : (gLowBatteryWarningLatched ? "active" : "ok"));
 }
 
 static void keepDiscoverableIfNeeded() {
@@ -860,14 +909,17 @@ void setup() {
 
   analogReadResolution(12);
   analogSetPinAttenuation(PIN_MIC_ADC, ADC_11db);
+  if (PIN_BAT_ADC >= 0) {
+    analogSetPinAttenuation(PIN_BAT_ADC, ADC_11db);
+  }
 
   gShouldClearBonds = detectBondClearRequest();
   if (gShouldClearBonds) {
     Serial.println("BOND clear requested by boot button hold");
   }
 
-  if (!initI2S()) {
-    fatalHalt(FatalCode::I2S_INIT, "i2s_init");
+  if (!initAudioOutputPath()) {
+    Serial.println("BLOCKED OUTPUT-PATH startup without analog output capability");
   }
 
   setTargetVolume(kDefaultVolumeAbs, "startup_default");
@@ -899,6 +951,7 @@ void loop() {
 
   updateModeArbitration();
   updateGainRamp();
+  updateLowBatteryProtection();
   keepDiscoverableIfNeeded();
   heartbeatLog();
 

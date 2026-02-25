@@ -64,6 +64,7 @@ Primary scenario: helmet/hands-free intercom endpoint paired to one smartphone a
 
 - The product MUST NOT emit high-amplitude transient artifacts during startup, reconnect, or mode handover.
 - The product MUST clamp output gain to a safe upper bound to avoid clipping and sudden spikes.
+- The product MUST enforce a conservative speaker safety limit suitable for the available 8Ω 0.5W speakers, even though the amplifier module can deliver higher peak power.
 
 ### 4.4 Fixed Hardware BOM Constraint (Project Scope Lock)
 
@@ -80,7 +81,7 @@ Approved BOM (Electrokit invoice F 2307333):
 | 41017634 | ESP32-WROOM-32 DevKit LiPo | 1 | Required main controller board |
 | 41019154 | LiPo battery 3.7V 1200mAh (JST-PH) | 1 | Required portable power source |
 | 41016669 | Electret microphone with amplifier + AGC | 1 | Required microphone input module |
-| 41018541 | Digital audio amplifier module 3W | 1 | Required speaker drive stage |
+| 41018541 | PAM8403 analog audio amplifier module (3W class) | 1 | Required speaker drive stage; input is analog line-level style (not I2S digital audio) |
 | 41023812 | Speaker 8Ω Ø50mm 0.5W | 2 | Available speaker units for output path |
 | 41004098 | Mini slide switch 1P ON-ON (2.54mm PCB) | 2 | Available hardware switch inputs |
 | 41001412 | Tactile switch PCB 6x6x5mm | 10 | Available button inputs |
@@ -92,6 +93,11 @@ BOM scope rules:
 - `HW-002` Product MUST NOT require additional sensors, radios, displays, or external co-processors for v1 acceptance.
 - `HW-003` Product SHOULD support operation with one connected speaker unit; using both available speakers is optional unless explicitly required by test scenarios.
 - `HW-004` Any optional controls/indicators in firmware MUST be limited to the available slide switches, tactile switches, and dual-color LEDs listed above.
+- `HW-005` Audio output implementation MUST be compatible with PAM8403 analog input using approved BOM parts only; v1 MUST NOT require an external I2S DAC module.
+- `HW-006` If hands-free profile (HFP) headers/libraries are unavailable in the selected ESP32 toolchain, call features MUST be marked blocked at boot and in acceptance artifacts (no implicit pass).
+- `HW-007` Wiring assumptions are locked for validation: slide switch is SPDT center-common, tactile switch uses diagonal pin-pair continuity, and common-cathode dual-color LED channels each use their own current-limiting resistor.
+- `HW-008` Battery/power caveat MUST be documented and tested: board jumper/power routing must prevent back-power or rail mismatch between USB, LiPo, and amplifier supply.
+- `HW-009` Low-battery behavior is required: when battery sensing wiring is present, firmware MUST reduce risk by forcing safe output behavior at/below threshold; when sensing is not wired in BOM-only build, status MUST be explicitly blocked/pending.
 
 ## 5. Functional Requirements
 
@@ -145,6 +151,19 @@ BOM scope rules:
 - [ ] `FR-OBS-003` Recoverable errors MUST be logged without halting runtime operation.
 - [ ] `FR-OBS-004` Fatal startup failures MUST be clearly logged with a stable error code or category.
 - [ ] `FR-OBS-005` A periodic heartbeat log SHOULD report high-level state at least every 10 seconds.
+
+### 5.8 Toolchain Preconditions and Blocked-State Handling
+
+- [ ] `FR-BLOCK-001` Boot logs MUST explicitly report whether HFP client support is available in the active toolchain build.
+- [ ] `FR-BLOCK-002` If HFP support is unavailable, the firmware MUST keep call path disabled and MUST mark call-related acceptance items as blocked/pending-device.
+- [ ] `FR-BLOCK-003` Boot logs MUST explicitly report whether the configured audio output backend matches PAM8403 analog-input constraints.
+- [ ] `FR-BLOCK-004` Firmware and checklist MUST NOT present blocked capabilities as passed.
+
+### 5.9 Power and Battery Protection Behavior
+
+- [ ] `FR-PWR-001` The system MUST document required battery/USB/jumper power configuration before acceptance testing.
+- [ ] `FR-PWR-002` If VBAT sensing is wired, firmware MUST detect low-battery threshold crossing and force safe behavior (at minimum reduce output level and exit active playback/call mode).
+- [ ] `FR-PWR-003` If VBAT sensing is not wired in BOM-only build, firmware MUST log low-battery protection as blocked/pending and acceptance MUST remain non-green for that item.
 
 ## 6. User-Facing Requirements
 
@@ -204,6 +223,7 @@ All items below MUST be true before declaring v1 complete:
 - [ ] `ACC-008` No unresolved fatal errors occur during a 2-hour mixed-use test (music, calls, disconnect/reconnect).
 - [ ] `ACC-009` All edge cases in Section 8 are manually validated and recorded as pass/fail.
 - [ ] `ACC-010` Validation build and test run are completed using only the approved BOM in Section 4.4 (no additional hardware dependencies).
+- [ ] `ACC-011` Validation records include explicit HFP preflight result, audio output path confirmation against PAM8403 analog input, and low-battery/jumper caveat status.
 
 ## 10. Test Matrix Requirements (Minimum)
 

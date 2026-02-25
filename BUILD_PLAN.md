@@ -8,7 +8,7 @@ Date: 2026-02-25
 |---|---|---|---|
 | P0 | Core architecture and deterministic mode arbiter (`FR-MODE-*`) | DONE | Keep host tests green on each change set. |
 | P1 | Firmware robustness hardening (`FR-REC-*`, `FR-MUSIC-003`, identity metadata) | IN PROGRESS | Run on-device smoke test after this refinement: pair, stream, call, disconnect/reconnect. |
-| P2 | Device validation matrix (`TM-001..TM-005`, `ACC-001..ACC-010`) | PENDING-DEVICE | Execute full matrix and record each run with `TEST_LOG_TEMPLATE.md`. |
+| P2 | Device validation matrix (`TM-001..TM-005`, `ACC-001..ACC-011`) | PENDING-DEVICE | Execute full matrix and record each run with `TEST_LOG_TEMPLATE.md`. |
 | P3 | v1 acceptance closeout | BLOCKED BY P2 | Convert remaining `PENDING-DEVICE` evidence to pass/fail records and finalize checklist. |
 
 ## Major FR Group Plan
@@ -16,14 +16,14 @@ Date: 2026-02-25
 | FR Group | Current Implementation Status | Evidence | Next Action |
 |---|---|---|---|
 | FR-BOOT / FR-PAIR | PARTIAL (firmware ready, device validation pending) | Boot to `IDLE`, discoverable/connectable flow, bond clear and single-bond policy in `esp32_intercom.ino`. | Perform physical pairing/reboot reconnect runs and log outcomes. |
-| FR-MUSIC | PARTIAL (runtime validation pending) | A2DP sink + I2S render path, AVRCP absolute volume clamp and RN handshake support. | Validate 30-minute stream + monotonic loudness on device. |
+| FR-MUSIC | PARTIAL (runtime validation pending) | A2DP sink + analog DAC render path compatible with PAM8403 input, AVRCP absolute volume clamp and RN handshake support. | Validate 30-minute stream + monotonic loudness on device. |
 | FR-CALL | PARTIAL (runtime validation pending) | HFP client guarded path, duplex callbacks, call-priority routing via shared arbiter. | Validate 15-minute full-duplex call intelligibility/stability. |
 | FR-MODE | IMPLEMENTED | Shared `state_machine.h` with deterministic priority and host tests. | Keep regression test passing; validate >=20 handovers on hardware. |
-| FR-FMT | PARTIAL (runtime validation pending) | Mode-driven I2S rate switch: music 44.1k, call 16k. | Measure call entry/exit format transitions on device. |
+| FR-FMT | PARTIAL (runtime validation pending) | Mode-driven output-rate target switch: music input 44.1k, call input 16k with analog output backend. | Measure call entry/exit transitions on device. |
 | FR-REC | PARTIAL (runtime validation pending) | Separate A2DP/HFP link booleans with derived source connectivity + reconnect-ready behavior. | Time disconnect-to-idle and reconnection readiness under repeated drops. |
 | FR-OBS | IMPLEMENTED IN FIRMWARE (session evidence pending) | Startup/mode/disconnect/heartbeat/warn/fatal logging in sketch. | Capture real run logs for acceptance records. |
 
-## Acceptance Mapping (ACC-001..ACC-010)
+## Acceptance Mapping (ACC-001..ACC-011)
 
 | ACC ID | Mapped FR Groups | Current Status | Next Action |
 |---|---|---|---|
@@ -37,6 +37,7 @@ Date: 2026-02-25
 | ACC-008 | NFR-RES-001, NFR-RES-002 | PENDING-DEVICE | 2-hour mixed-use stress run with reconnect cycles. |
 | ACC-009 | EC-001..EC-009 | PENDING-DEVICE | Execute full edge-case matrix on hardware and record pass/fail. |
 | ACC-010 | HW-001..HW-004, TM-005 | PENDING-DEVICE | Complete per-run BOM audit fields in test logs. |
+| ACC-011 | FR-BLOCK, FR-PWR, HW-005..HW-009 | PENDING-DEVICE | Record HFP preflight result, analog-output wiring proof, and low-battery/jumper caveat status. |
 
 ## Immediate Execution Queue
 

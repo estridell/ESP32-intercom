@@ -34,7 +34,7 @@ Use one entry per executed test run. Keep logs attached (serial output, notes, s
 - [ ] ESP32-WROOM-32 DevKit LiPo (SKU 41017634)
 - [ ] LiPo battery 3.7V 1200mAh (SKU 41019154)
 - [ ] Electret microphone module + AGC (SKU 41016669)
-- [ ] Digital audio amplifier module 3W (SKU 41018541)
+- [ ] PAM8403 analog audio amplifier module (SKU 41018541)
 - [ ] Speaker 8ohm 50mm (SKU 41023812, one or two used)
 - [ ] Switches/LEDs from approved BOM only (SKUs 41004098, 41001412, 40307082)
 - [ ] No extra hardware dependencies used
