@@ -20,6 +20,8 @@ Status legend:
 | PF-BOM-004 | PENDING-DEVICE | Verify common-cathode dual-color LED wiring uses separate current-limiting resistor per color channel. |
 | PF-BOM-005 | PENDING-DEVICE | Verify LiPo/USB/jumper/power routing so amplifier and ESP32 rails are valid and no back-power condition exists. |
 | PF-BOM-006 | PENDING-DEVICE | Verify speaker safety setup: 8Ω 0.5W speaker load, conservative initial volume, and no sustained overdrive behavior. |
+| PF-BOM-007 | PENDING-DEVICE | Verify PAM8403 output wiring safety: one speaker per channel, no speaker terminal tied to GND, and no L/R output tying. |
+| PF-BOM-008 | PENDING-DEVICE | Verify measured/estimated output stays within safe envelope (~<=2.0 Vrms equivalent per 8Ω speaker channel, or stricter). |
 
 ## FR (Functional Requirements)
 
