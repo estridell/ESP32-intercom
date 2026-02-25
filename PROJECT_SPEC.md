@@ -1,135 +1,197 @@
-# Project Specification (Maintainer Reality Check)
+# Product Specification: ESP32 Bluetooth Intercom Endpoint
 
-## 1) Purpose and Scope
+## 1. Document Purpose
 
-- Provide a **single-ESP32 Classic Bluetooth audio endpoint** for phone use-cases:
-  - A2DP sink for music playback.
-  - HFP client for call audio (mic up-link + speaker down-link).
-  - AVRCP absolute volume handshake/control.
-- Target hardware is **ESP32-WROOM-class** boards with Bluetooth Classic support.
-- Scope is currently one-device-at-a-time pairing/use (iPhone/PC), not mesh/intercom networking between ESP32 units.
+This document defines **what the product must do** for a rebuild from scratch.
 
-Out of scope in current codebase:
-- No DSP stack (AEC/NS/AGC), no call controls UI, no battery/power management logic.
-- No automated tests, CI, or production release packaging.
+- It is implementation-agnostic and does not prescribe code structure, APIs, libraries, or firmware architecture.
+- It is normative: requirements using **MUST / MUST NOT / SHOULD** are binding.
+- It targets a single-device Bluetooth intercom endpoint built on ESP32-class hardware with Bluetooth Classic support.
 
-## 2) Current Code Variants and Canonical Recommendation
+## 2. Product Intent and Scope
 
-| File | Intent | Status | Recommendation |
-|---|---|---|---|
-| `esp_intercom.ino` | Main dual-profile build using external I2S audio output | Most coherent baseline; labeled 2.9.0 stable in-file | **Canonical** |
-| `code3.ino` | Same flow but routes output through ESP32 internal DAC (GPIO25) | Functional variant, lower-fidelity analog path, hardware-specific | Keep as optional hardware variant |
-| `Barebones_CODE.ino` | Minimal BT bring-up + CoD + HFP init/discoverability | Diagnostic/bootstrap only; no media/call audio pipeline | Keep for troubleshooting only |
+### 2.1 Product Intent
 
-Canonical recommendation:
-- Use `esp_intercom.ino` as the source of truth for v1 stabilization.
-- Treat `code3.ino` as a feature branch variant until behavior is parity-tested.
+The product is a Bluetooth audio endpoint that allows a user to:
 
-## 3) Hardware Assumptions and Pin Maps per Variant
+- stream music from a phone/computer to the device speaker path, and
+- conduct two-way phone calls through the device (remote voice playback + local microphone capture).
 
-Common assumptions:
-- ESP32 with Bluetooth Classic (not BLE-only parts).
-- One I2S digital mic input path and one speaker output path.
+Primary scenario: helmet/hands-free intercom endpoint paired to one smartphone at a time.
 
-| Variant | BCLK | WS/LRCK | Data Out | Data In (Mic) | Audio Out Path |
-|---|---:|---:|---:|---:|---|
-| `esp_intercom.ino` | GPIO26 | GPIO25 | GPIO22 | GPIO35 | External I2S DAC/amp (example: MAX98357A) |
-| `code3.ino` | GPIO32 | GPIO33 | N/A (`I2S_PIN_NO_CHANGE`) | GPIO35 | ESP32 internal DAC on GPIO25 (right channel) |
-| `Barebones_CODE.ino` | N/A | N/A | N/A | N/A | No audio pipeline implemented |
+### 2.2 In Scope
 
-Notes:
-- `code3.ino` requires hardware compatible with internal DAC mode and an external analog amplifier stage.
-- `Barebones_CODE.ino` only validates BT visibility/profile identity behavior.
+- Bluetooth Classic discoverability, pairing, bonding, and reconnect behavior.
+- Music playback as a Bluetooth media sink.
+- Full-duplex call audio as a Bluetooth hands-free endpoint.
+- Volume synchronization with source device media volume commands.
+- Deterministic behavior when switching between music and calls.
+- Runtime status and error observability via serial logs.
 
-## 4) Bluetooth Profiles and Runtime State Machine
+### 2.3 Out of Scope (v1)
 
-Profiles used:
-- A2DP Sink (`esp_a2d_*`) for media audio.
-- HFP Client (`esp_hf_client_*`) for call audio.
-- AVRCP CT/TG (`esp_avrc_*`) for absolute volume sync and notifications.
+- Mesh or peer-to-peer intercom networking between multiple embedded endpoints.
+- On-device UI beyond optional minimal status indicators.
+- Advanced voice DSP features (echo cancellation, noise suppression, automatic gain control).
+- Battery charging/power management policy beyond basic boot/runtime behavior.
+- OTA update, cloud services, or mobile companion apps.
 
-Boot/init sequence in main variants:
-1. Serial + NVS init.
-2. I2S driver/pins configured.
-3. BT controller + Bluedroid started/enabled.
-4. Device name set to `esp_intercom`; CoD set to Audio/Video Hands-Free.
-5. AVRCP CT/TG init.
-6. A2DP init + callback registration.
-7. HFP client init + audio callback registration.
-8. Discoverable/connectable mode enabled.
+## 3. Definitions
 
-Runtime state model (implicit in flags/logging):
+- `Source Device`: phone or computer that initiates Bluetooth media/call sessions.
+- `Music Session`: media streaming session to the endpoint.
+- `Call Session`: active duplex voice session to/from the endpoint.
+- `Active Audio Mode`: one of `IDLE`, `MUSIC`, `CALL`.
+- `Handover`: transition from one active audio mode to another.
 
-| State | Enter Condition | Exit Condition |
-|---|---|---|
-| `STANDBY_IDLE` | Default after setup, or streaming/call inactive | A2DP stream starts or HFP audio starts |
-| `STREAMING_MEDIA` | A2DP audio state active (`isMediaStreaming=true`) | A2DP pause/stop or HFP call audio starts |
-| `IN_VOICE_CALL` | HFP audio state active (`isCallActive=true`) | HFP audio inactive |
+## 4. System Context and Constraints
 
-Clock/profile transition behavior:
-- Call active: I2S clock switched to **16 kHz mono**.
-- Call inactive: I2S clock switched back to **44.1 kHz stereo**.
-- Heartbeat log every 5s reports state with `isCallActive` taking priority over `isMediaStreaming`.
+### 4.1 Platform Constraints
 
-## 5) Audio Pipeline for Music and Calls
+- The product MUST run on ESP32-class hardware that supports Bluetooth Classic audio profiles.
+- The product MUST support:
+  - one speaker/audio output path, and
+  - one microphone/audio input path.
+- The product MUST operate as a single endpoint, paired to one source device at a time in v1.
 
-Music (A2DP) path:
-1. PCM arrives in `a2dp_sink_data_cb`.
-2. Samples scaled using squared AVRCP volume curve (`volume^2 / 16129`).
-3. Scaled PCM written to I2S output.
+### 4.2 User-Visible Identity Constraints
 
-Call downlink (phone -> headset):
-1. HFP incoming callback receives audio frames.
-2. Frames written directly to I2S TX.
+- The product MUST expose a stable Bluetooth device name configurable at build time.
+- The product SHOULD expose class-of-device metadata consistent with hands-free audio equipment.
+- The product MUST remain pairable after reboot without reflashing.
 
-Call uplink (mic -> phone):
-1. HFP outgoing callback reads from I2S RX.
-2. Captured frames returned to HFP stack.
+### 4.3 Safety and Audio Behavior Constraints
 
-Practical behavior:
-- Single shared I2S peripheral for both media and call audio.
-- No dedicated mixer, no software resampler, no echo cancellation.
+- The product MUST NOT emit high-amplitude transient artifacts during startup, reconnect, or mode handover.
+- The product MUST clamp output gain to a safe upper bound to avoid clipping and sudden spikes.
 
-## 6) Build/Run Environment Constraints
+## 5. Functional Requirements
 
-- Targeted explicitly at **Arduino ESP32 core 2.0.17**.
-- Uses legacy ESP-IDF APIs exposed by that core (`driver/i2s.h`, `esp_hf_client_api.h`, etc.).
-- Requires board profile with Bluetooth Classic support and enough flash; README suggests large app partition.
-- Serial monitor expected at **115200 baud**.
+### 5.1 Boot, Discoverability, and Pairing
 
-Library reality vs README:
-- Main sketches do **not** use `ESP32-A2DP` or `Arduino-Audio-Tools`.
-- `Barebones_CODE.ino` uses `BluetoothSerial.h` (from Arduino ESP32 core).
+- [ ] `FR-BOOT-001` On boot, the device MUST initialize into `IDLE` mode.
+- [ ] `FR-BOOT-002` Within 10 seconds of boot, the device MUST become discoverable and connectable unless explicitly configured otherwise.
+- [ ] `FR-PAIR-001` The device MUST support initial pairing and bonding with at least one mainstream smartphone platform.
+- [ ] `FR-PAIR-002` Bonding data MUST persist across power cycles.
+- [ ] `FR-PAIR-003` If a bonded source device is available, the endpoint SHOULD reconnect automatically after reboot.
+- [ ] `FR-PAIR-004` If auto-reconnect fails, the device MUST remain discoverable/connectable for manual reconnection.
 
-## 7) Gaps / Risks / Technical Debt
+### 5.2 Music Playback Behavior
 
-- Event handling relies on **magic numeric constants** (`event == 0/1/2`, `state == 1/2`) rather than enum symbols.
-- Minimal runtime error checking after many BT/profile API calls.
-- `transitionStartTime` is declared but unused; README claims latency instrumentation not present in code.
-- Blocking `i2s_read`/`i2s_write` inside BT callbacks may increase underrun/latency risk under load.
-- No explicit reconnection policy, pairing management UX, or call-control features.
-- High duplication between `esp_intercom.ino` and `code3.ino` increases drift risk.
-- No test harness or compatibility matrix (board variants, phones, core versions).
+- [ ] `FR-MUSIC-001` The device MUST function as a Bluetooth media sink for stereo music playback.
+- [ ] `FR-MUSIC-002` During active music streaming, decoded audio MUST be rendered continuously to the speaker path.
+- [ ] `FR-MUSIC-003` Media volume commands from the source device MUST change perceived output loudness monotonically.
+- [ ] `FR-MUSIC-004` If media is paused/stopped by the source device, output MUST return to silent `IDLE` behavior without requiring reboot.
 
-## 8) Concrete Roadmap (Prioritized)
+### 5.3 Call Audio Behavior
 
-| Priority | Milestone | Concrete Deliverables |
-|---|---|---|
-| P0 | Canonical stabilization | Freeze `esp_intercom.ino` as baseline; replace magic event/state numbers with named enums; add return-code checks and fatal/log paths; remove dead vars/log claims |
-| P0 | Variant hygiene | Refactor shared logic into common module; isolate output backend differences (external I2S DAC vs internal DAC) behind compile-time switch |
-| P1 | Audio robustness | Move audio I/O to buffered task model; add underrun/overrun counters; define deterministic behavior during profile handover |
-| P1 | Observability | Implement real latency metrics that match README claims; structured log tags for state, errors, and transitions |
-| P2 | Compatibility validation | Test matrix: iPhone call/music transitions, reconnect after reboot, long-run playback, multiple ESP32 devkits |
-| P2 | Release readiness | Versioned changelog, known-limitations doc, reproducible build settings (board/core/partition) |
+- [ ] `FR-CALL-001` The device MUST function as a hands-free endpoint supporting full-duplex call audio.
+- [ ] `FR-CALL-002` During an active call, incoming remote voice MUST be audible on the speaker path.
+- [ ] `FR-CALL-003` During an active call, local microphone capture MUST be transmitted to the source device.
+- [ ] `FR-CALL-004` Entering or leaving a call MUST NOT require reboot or user re-pairing.
 
-## 9) Acceptance Criteria for a Stable v1
+### 5.4 Mode Arbitration and Priority
 
-A v1 is accepted when all items pass on canonical hardware (ESP32-WROOM + external I2S DAC + digital mic):
+- [ ] `FR-MODE-001` Active mode MUST be one of exactly: `IDLE`, `MUSIC`, `CALL`.
+- [ ] `FR-MODE-002` If both music and call contexts are signaled, `CALL` MUST take priority for speaker output.
+- [ ] `FR-MODE-003` On call end, the endpoint MUST return to `MUSIC` if music is still active; otherwise to `IDLE`.
+- [ ] `FR-MODE-004` Handover between `MUSIC` and `CALL` MUST be automatic and deterministic.
 
-1. Builds cleanly on Arduino ESP32 core 2.0.17 with documented board/partition settings.
-2. Device is discoverable, pairable, and reconnects after power cycle without reflashing.
-3. A2DP playback runs 30 minutes without crash/reset; AVRCP absolute volume changes are reflected in output level.
-4. HFP call path is duplex (remote hears mic, local hears remote) and transitions do not require reboot.
-5. Entering/leaving calls correctly switches sample-rate/channel mode (16 kHz mono <-> 44.1 kHz stereo).
-6. Serial logs report unambiguous state transitions and no recurring fatal errors.
-7. `code3.ino` status is explicitly documented as either "supported variant" (with tested limits) or "experimental".
+### 5.5 Audio Format Adaptation
+
+- [ ] `FR-FMT-001` The endpoint MUST support music mode output compatible with 44.1 kHz stereo source streams.
+- [ ] `FR-FMT-002` The endpoint MUST support call mode audio compatible with 16 kHz mono voice sessions.
+- [ ] `FR-FMT-003` Audio format changes required by mode handover MUST occur automatically and without manual intervention.
+- [ ] `FR-FMT-004` After call exit, audio format MUST revert correctly for music playback.
+
+### 5.6 Connection Loss and Recovery
+
+- [ ] `FR-REC-001` Unexpected source disconnect MUST transition the endpoint to `IDLE` within 3 seconds.
+- [ ] `FR-REC-002` After disconnect, the endpoint MUST remain available for reconnection without reboot.
+- [ ] `FR-REC-003` If reconnect attempts fail repeatedly, the endpoint MUST continue advertising/connectable behavior and log failure reason categories.
+
+### 5.7 Observability and Diagnostics
+
+- [ ] `FR-OBS-001` The device MUST emit runtime logs over serial at startup, connect/disconnect, and mode transitions.
+- [ ] `FR-OBS-002` Logs MUST identify current active mode and transition direction (`IDLE->MUSIC`, `MUSIC->CALL`, etc.).
+- [ ] `FR-OBS-003` Recoverable errors MUST be logged without halting runtime operation.
+- [ ] `FR-OBS-004` Fatal startup failures MUST be clearly logged with a stable error code or category.
+- [ ] `FR-OBS-005` A periodic heartbeat log SHOULD report high-level state at least every 10 seconds.
+
+## 6. User-Facing Requirements
+
+- [ ] `UX-001` Pairing flow MUST be achievable from standard phone Bluetooth settings without custom app support.
+- [ ] `UX-002` Device identity MUST remain consistent across reboots unless explicitly reconfigured.
+- [ ] `UX-003` During normal operation, user actions needed to switch between music and calls MUST be limited to phone-native behavior (play/pause/call answer/hang up).
+- [ ] `UX-004` If pairing/bond state is invalid or corrupt, the device MUST expose a recoverable path (manual re-pairing) and clear diagnostic logs.
+
+## 7. Non-Functional Requirements
+
+### 7.1 Reliability
+
+- [ ] `NFR-REL-001` System MUST complete a 30-minute continuous music session without crash, watchdog reset, or fatal error.
+- [ ] `NFR-REL-002` System MUST complete a 15-minute continuous call session without crash, watchdog reset, or fatal error.
+- [ ] `NFR-REL-003` System MUST handle at least 20 music<->call handovers in one runtime session without requiring reboot.
+
+### 7.2 Latency and Responsiveness
+
+- [ ] `NFR-PERF-001` Mode transition from call activation signal to valid call audio routing MUST complete within 2 seconds in nominal RF conditions.
+- [ ] `NFR-PERF-002` Mode transition from call end signal to restored music audio (if music is active) MUST complete within 2 seconds.
+- [ ] `NFR-PERF-003` Disconnect detection to silent `IDLE` state MUST complete within 3 seconds.
+
+### 7.3 Audio Quality Baseline
+
+- [ ] `NFR-AUD-001` Music output MUST be free of sustained stutter/dropout under stable RF conditions for the 30-minute reliability test.
+- [ ] `NFR-AUD-002` Call audio path MUST be intelligible bidirectionally under stable RF conditions.
+- [ ] `NFR-AUD-003` Audible artifacts during handover SHOULD be brief and non-disruptive (target <500 ms).
+
+### 7.4 Resource and Stability
+
+- [ ] `NFR-RES-001` Runtime memory usage MUST remain bounded such that no progressive memory leak causes reset within a 2-hour mixed-use test.
+- [ ] `NFR-RES-002` Repeated connect/disconnect cycles (minimum 30 cycles) MUST NOT degrade ability to pair/connect.
+
+## 8. Required Behavioral Edge Cases
+
+- [ ] `EC-001` Incoming call while music is playing: call audio takes priority and music is suppressed.
+- [ ] `EC-002` Call ends while media session remains active: music resumes without manual reconnect.
+- [ ] `EC-003` Call ends and media is inactive: endpoint returns to silent `IDLE`.
+- [ ] `EC-004` Source disconnects during call: endpoint exits call mode and returns to `IDLE` safely.
+- [ ] `EC-005` Source disconnects during music: endpoint exits music mode and returns to `IDLE` safely.
+- [ ] `EC-006` Rapid alternating events (play/pause/call start/call end in quick succession): endpoint maintains a valid mode and does not deadlock.
+- [ ] `EC-007` Volume change commands during mode transition: no crash; resulting output level remains within safe bounds.
+- [ ] `EC-008` Reboot while bonded: endpoint remains pairable and can reconnect after startup.
+- [ ] `EC-009` Re-pair attempt from a new source while bonded to another: behavior is deterministic and documented (reject or replace bond policy).
+
+## 9. Compliance Checklist for Autonomous Rebuild
+
+All items below MUST be true before declaring v1 complete:
+
+- [ ] `ACC-001` Product can be paired from a phone over Bluetooth settings with no custom tooling.
+- [ ] `ACC-002` Music streaming works end-to-end with audible output for 30 continuous minutes.
+- [ ] `ACC-003` Call audio is full-duplex for 15 continuous minutes.
+- [ ] `ACC-004` At least 20 call/music handovers succeed with no reboot requirement.
+- [ ] `ACC-005` Post-reboot reconnect succeeds for a bonded source device in at least 4/5 attempts.
+- [ ] `ACC-006` Disconnect recovery returns system to `IDLE` and reconnect-ready state.
+- [ ] `ACC-007` Serial logs clearly show startup status, connection changes, and mode transitions.
+- [ ] `ACC-008` No unresolved fatal errors occur during a 2-hour mixed-use test (music, calls, disconnect/reconnect).
+- [ ] `ACC-009` All edge cases in Section 8 are manually validated and recorded as pass/fail.
+
+## 10. Test Matrix Requirements (Minimum)
+
+The acceptance process MUST include the following matrix:
+
+- [ ] `TM-001` At least one iPhone model and one non-iPhone source device.
+- [ ] `TM-002` At least two power-cycle reconnect tests per source device.
+- [ ] `TM-003` At least one long-session test per source type:
+  - music-only,
+  - call-only,
+  - mixed transitions.
+- [ ] `TM-004` Validation logs retained for each run with timestamp, source device, scenario, and pass/fail outcomes.
+
+## 11. Explicit Non-Requirements (To Prevent Scope Creep)
+
+- No requirement for multi-node intercom networking.
+- No requirement for advanced DSP enhancement stack.
+- No requirement for companion mobile app.
+- No requirement for cloud connectivity or telemetry backend.
+- No requirement for specific internal firmware architecture or code organization.
