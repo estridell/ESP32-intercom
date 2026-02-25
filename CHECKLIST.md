@@ -1,18 +1,19 @@
 # ESP32 Intercom v1 Checklist (Living)
 
 Status summary: hardware-verified items remain `PENDING-DEVICE` until validated on real BOM hardware.
+Canonical FR/HW/ACC status mapping is tracked in `SPEC_CONFORMANCE.md`.
 
 Status legend:
 - `GREEN`: implemented with direct evidence in repo (and host-test where applicable)
-- `YELLOW`: partially implemented or ambiguous evidence
-- `RED`: blocked or missing
 - `PENDING-DEVICE`: requires physical BOM execution, runtime-duration test, or measured on-device evidence
+- `BLOCKED-TOOLCHAIN`: cannot be enabled/verified due to missing ESP32 profile/header/toolchain capability
+- `GAP`: repo-side requirement mismatch still requiring implementation/doc fix
 
 ## Preflight (Must Run Before Device Acceptance)
 
 | ID | Status | Evidence / Notes |
 |---|---|---|
-| PF-HFP-001 | GREEN | `esp32_intercom.ino` uses compile-time guard for `esp_hf_client_api.h` and explicitly reports blocked status when unavailable. |
+| PF-HFP-001 | GREEN | `ESP32-intercom.ino` uses compile-time guard for `esp_hf_client_api.h` and explicitly reports blocked status when unavailable. |
 | PF-HFP-002 | PENDING-DEVICE | Boot log on target must explicitly show `HFP-TOOLCHAIN` status (`ok` or `blocked`) and be saved with test artifact. |
 | PF-BOM-001 | PENDING-DEVICE | Verify PAM8403 analog input wiring: ESP32 DAC pin (GPIO25) -> PAM8403 input, shared ground, and correct amp supply rail. |
 | PF-BOM-002 | PENDING-DEVICE | Verify slide switch wiring uses SPDT center-common pin to GPIO or rail as expected by chosen function. |
@@ -33,7 +34,7 @@ Status legend:
 | FR-PAIR-002 | PENDING-DEVICE | Default stack bonding persistence path exists; reboot persistence requires hardware run. |
 | FR-PAIR-003 | PENDING-DEVICE | Reconnect behavior implemented; phone/stack behavior must be measured on device. |
 | FR-PAIR-004 | PENDING-DEVICE | Discoverable/connectable restore path implemented; manual reconnection behavior pending hardware validation. |
-| FR-MUSIC-001 | PENDING-DEVICE | A2DP sink init and callbacks implemented in `esp32_intercom.ino`; end-to-end proof pending device. |
+| FR-MUSIC-001 | PENDING-DEVICE | A2DP sink init and callbacks implemented in `ESP32-intercom.ino`; end-to-end proof pending device. |
 | FR-MUSIC-002 | PENDING-DEVICE | A2DP PCM now routes to analog DAC output backend (PAM8403-compatible direction); audible validation pending device. |
 | FR-MUSIC-003 | PENDING-DEVICE | AVRCP absolute-volume clamp path implemented; monotonic loudness must be validated on hardware. |
 | FR-MUSIC-004 | PENDING-DEVICE | A2DP stop/suspend clears `music_active` -> `IDLE`; runtime proof pending device. |
@@ -118,7 +119,7 @@ Status legend:
 | ACC-008 | PENDING-DEVICE | Requires 2-hour mixed-use validation with no unresolved fatal errors. |
 | ACC-009 | PENDING-DEVICE | Requires manual execution + records for all Section 8 edge cases. |
 | ACC-010 | PENDING-DEVICE | Requires per-run hardware audit that only approved BOM was used. |
-| ACC-011 | PENDING-DEVICE | Requires explicit preflight record of HFP availability, analog output wiring confirmation, and low-battery/jumper caveat status. |
+| ACC-011 | PENDING-DEVICE | Requires explicit preflight record of HFP availability, analog output wiring confirmation, and low-battery/jumper caveat status (fields now explicit in `TEST_LOG_TEMPLATE.md`). |
 
 ## TM (Test Matrix)
 
@@ -128,7 +129,7 @@ Status legend:
 | TM-002 | PENDING-DEVICE | Needs two power-cycle reconnect tests per source device. |
 | TM-003 | PENDING-DEVICE | Needs long-session runs (music-only/call-only/mixed) per source type. |
 | TM-004 | GREEN | Procedure documented in `README.md` and `TEST_LOG_TEMPLATE.md`; pending on-device execution artifacts. |
-| TM-005 | PENDING-DEVICE | `TEST_LOG_TEMPLATE.md` includes BOM audit fields; completed hardware audit records still pending per run. |
+| TM-005 | PENDING-DEVICE | `TEST_LOG_TEMPLATE.md` includes BOM and ACC-011 preflight fields; completed per-run audit records still pending. |
 
 ## HW (BOM Constraints)
 
@@ -141,5 +142,6 @@ Status legend:
 | HW-005 | PENDING-DEVICE | Firmware output backend now targets analog DAC path for PAM8403 compatibility; physical wiring/audio validation pending. |
 | HW-006 | GREEN | HFP toolchain precondition + blocked-status handling implemented explicitly in firmware logs/checklist. |
 | HW-007 | PENDING-DEVICE | SPDT/tactile/CC-LED wiring assumptions require bench continuity and assembly validation. |
+| HW-010 | PENDING-DEVICE | PAM8403 BTL output wiring safety (no `L-/R-` to GND, no tied channels, one load/channel) requires physical wiring validation. |
 | HW-008 | PENDING-DEVICE | Battery/jumper caveats require physical power-path validation. |
-| HW-009 | PENDING-DEVICE | Safe speaker-power behavior requires measured validation on 0.5W speakers. |
+| HW-009 | PENDING-DEVICE | Low-battery safe-behavior branch requires bench validation when VBAT sensing is wired; no-sensing path is explicitly blocked in firmware logs. |
