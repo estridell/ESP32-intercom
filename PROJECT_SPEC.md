@@ -65,6 +65,34 @@ Primary scenario: helmet/hands-free intercom endpoint paired to one smartphone a
 - The product MUST NOT emit high-amplitude transient artifacts during startup, reconnect, or mode handover.
 - The product MUST clamp output gain to a safe upper bound to avoid clipping and sudden spikes.
 
+### 4.4 Fixed Hardware BOM Constraint (Project Scope Lock)
+
+This gymnasiearbete build is constrained to the exact purchased hardware set below.
+
+- The v1 implementation MUST target only the listed hardware SKUs and quantities.
+- The v1 implementation MUST NOT assume additional hardware modules beyond this list.
+- If a requirement cannot be met with this BOM, the requirement MUST be marked blocked and explicitly documented.
+
+Approved BOM (Electrokit invoice F 2307333):
+
+| SKU | Part | Qty | Constraint |
+|---|---|---:|---|
+| 41017634 | ESP32-WROOM-32 DevKit LiPo | 1 | Required main controller board |
+| 41019154 | LiPo battery 3.7V 1200mAh (JST-PH) | 1 | Required portable power source |
+| 41016669 | Electret microphone with amplifier + AGC | 1 | Required microphone input module |
+| 41018541 | Digital audio amplifier module 3W | 1 | Required speaker drive stage |
+| 41023812 | Speaker 8Ω Ø50mm 0.5W | 2 | Available speaker units for output path |
+| 41004098 | Mini slide switch 1P ON-ON (2.54mm PCB) | 2 | Available hardware switch inputs |
+| 41001412 | Tactile switch PCB 6x6x5mm | 10 | Available button inputs |
+| 40307082 | LED 3mm red/green 3-pin diffuse CC | 2 | Available status indicator LEDs |
+
+BOM scope rules:
+
+- `HW-001` Product MUST be buildable and testable with the approved BOM only.
+- `HW-002` Product MUST NOT require additional sensors, radios, displays, or external co-processors for v1 acceptance.
+- `HW-003` Product SHOULD support operation with one connected speaker unit; using both available speakers is optional unless explicitly required by test scenarios.
+- `HW-004` Any optional controls/indicators in firmware MUST be limited to the available slide switches, tactile switches, and dual-color LEDs listed above.
+
 ## 5. Functional Requirements
 
 ### 5.1 Boot, Discoverability, and Pairing
@@ -175,6 +203,7 @@ All items below MUST be true before declaring v1 complete:
 - [ ] `ACC-007` Serial logs clearly show startup status, connection changes, and mode transitions.
 - [ ] `ACC-008` No unresolved fatal errors occur during a 2-hour mixed-use test (music, calls, disconnect/reconnect).
 - [ ] `ACC-009` All edge cases in Section 8 are manually validated and recorded as pass/fail.
+- [ ] `ACC-010` Validation build and test run are completed using only the approved BOM in Section 4.4 (no additional hardware dependencies).
 
 ## 10. Test Matrix Requirements (Minimum)
 
@@ -187,6 +216,7 @@ The acceptance process MUST include the following matrix:
   - call-only,
   - mixed transitions.
 - [ ] `TM-004` Validation logs retained for each run with timestamp, source device, scenario, and pass/fail outcomes.
+- [ ] `TM-005` Hardware audit record confirms each test run used only Section 4.4 BOM parts.
 
 ## 11. Explicit Non-Requirements (To Prevent Scope Creep)
 
