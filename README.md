@@ -40,7 +40,7 @@ Battery/jumper caveats:
 
 1. Install board package: `esp32 by Espressif Systems` (2.x line).
 2. Select board: `ESP32 Dev Module` (or your exact WROOM-32 devkit profile).
-3. Open `esp32_intercom.ino`.
+3. Open `ESP32-intercom.ino`.
 4. Select serial port, then upload.
 5. Open Serial Monitor at `115200`.
 

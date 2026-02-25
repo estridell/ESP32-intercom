@@ -15,7 +15,7 @@ Date: 2026-02-25
 
 | FR Group | Current Implementation Status | Evidence | Next Action |
 |---|---|---|---|
-| FR-BOOT / FR-PAIR | PARTIAL (firmware ready, device validation pending) | Boot to `IDLE`, discoverable/connectable flow, bond clear and single-bond policy in `esp32_intercom.ino`. | Perform physical pairing/reboot reconnect runs and log outcomes. |
+| FR-BOOT / FR-PAIR | PARTIAL (firmware ready, device validation pending) | Boot to `IDLE`, discoverable/connectable flow, bond clear and single-bond policy in `ESP32-intercom.ino`. | Perform physical pairing/reboot reconnect runs and log outcomes. |
 | FR-MUSIC | PARTIAL (runtime validation pending) | A2DP sink + analog DAC render path compatible with PAM8403 input, AVRCP absolute volume clamp and RN handshake support. | Validate 30-minute stream + monotonic loudness on device. |
 | FR-CALL | PARTIAL (runtime validation pending) | HFP client guarded path, duplex callbacks, call-priority routing via shared arbiter. | Validate 15-minute full-duplex call intelligibility/stability. |
 | FR-MODE | IMPLEMENTED | Shared `state_machine.h` with deterministic priority and host tests. | Keep regression test passing; validate >=20 handovers on hardware. |

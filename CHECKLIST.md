@@ -13,7 +13,7 @@ Status legend:
 
 | ID | Status | Evidence / Notes |
 |---|---|---|
-| PF-HFP-001 | GREEN | `esp32_intercom.ino` uses compile-time guard for `esp_hf_client_api.h` and explicitly reports blocked status when unavailable. |
+| PF-HFP-001 | GREEN | `ESP32-intercom.ino` uses compile-time guard for `esp_hf_client_api.h` and explicitly reports blocked status when unavailable. |
 | PF-HFP-002 | PENDING-DEVICE | Boot log on target must explicitly show `HFP-TOOLCHAIN` status (`ok` or `blocked`) and be saved with test artifact. |
 | PF-BOM-001 | PENDING-DEVICE | Verify PAM8403 analog input wiring: ESP32 DAC pin (GPIO25) -> PAM8403 input, shared ground, and correct amp supply rail. |
 | PF-BOM-002 | PENDING-DEVICE | Verify slide switch wiring uses SPDT center-common pin to GPIO or rail as expected by chosen function. |
@@ -34,7 +34,7 @@ Status legend:
 | FR-PAIR-002 | PENDING-DEVICE | Default stack bonding persistence path exists; reboot persistence requires hardware run. |
 | FR-PAIR-003 | PENDING-DEVICE | Reconnect behavior implemented; phone/stack behavior must be measured on device. |
 | FR-PAIR-004 | PENDING-DEVICE | Discoverable/connectable restore path implemented; manual reconnection behavior pending hardware validation. |
-| FR-MUSIC-001 | PENDING-DEVICE | A2DP sink init and callbacks implemented in `esp32_intercom.ino`; end-to-end proof pending device. |
+| FR-MUSIC-001 | PENDING-DEVICE | A2DP sink init and callbacks implemented in `ESP32-intercom.ino`; end-to-end proof pending device. |
 | FR-MUSIC-002 | PENDING-DEVICE | A2DP PCM now routes to analog DAC output backend (PAM8403-compatible direction); audible validation pending device. |
 | FR-MUSIC-003 | PENDING-DEVICE | AVRCP absolute-volume clamp path implemented; monotonic loudness must be validated on hardware. |
 | FR-MUSIC-004 | PENDING-DEVICE | A2DP stop/suspend clears `music_active` -> `IDLE`; runtime proof pending device. |
