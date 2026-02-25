@@ -65,6 +65,9 @@ Primary scenario: helmet/hands-free intercom endpoint paired to one smartphone a
 - The product MUST NOT emit high-amplitude transient artifacts during startup, reconnect, or mode handover.
 - The product MUST clamp output gain to a safe upper bound to avoid clipping and sudden spikes.
 - The product MUST enforce a conservative speaker safety limit suitable for the available 8Ω 0.5W speakers, even though the amplifier module can deliver higher peak power.
+- For 8Ω / 0.5W speakers, continuous electrical output MUST be kept at or below ~2.0 Vrms equivalent per channel (or stricter).
+- The product MUST include output limiting behavior that prevents sustained overdrive in music/call scenarios.
+- The product SHOULD include a protective high-pass behavior (~300–400 Hz region) for tiny speaker load protection.
 
 ### 4.4 Fixed Hardware BOM Constraint (Project Scope Lock)
 
@@ -96,6 +99,7 @@ BOM scope rules:
 - `HW-005` Audio output implementation MUST be compatible with PAM8403 analog input using approved BOM parts only; v1 MUST NOT require an external I2S DAC module.
 - `HW-006` If hands-free profile (HFP) headers/libraries are unavailable in the selected ESP32 toolchain, call features MUST be marked blocked at boot and in acceptance artifacts (no implicit pass).
 - `HW-007` Wiring assumptions are locked for validation: slide switch is SPDT center-common, tactile switch uses diagonal pin-pair continuity, and common-cathode dual-color LED channels each use their own current-limiting resistor.
+- `HW-010` PAM8403 output-side wiring safety is mandatory: do not connect L-/R- speaker terminals to system GND, do not tie L/R outputs together, and use one speaker load per channel.
 - `HW-008` Battery/power caveat MUST be documented and tested: board jumper/power routing must prevent back-power or rail mismatch between USB, LiPo, and amplifier supply.
 - `HW-009` Low-battery behavior is required: when battery sensing wiring is present, firmware MUST reduce risk by forcing safe output behavior at/below threshold; when sensing is not wired in BOM-only build, status MUST be explicitly blocked/pending.
 

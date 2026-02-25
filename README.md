@@ -10,6 +10,7 @@ This repo is locked to the purchased Electrokit BOM in `PROJECT_SPEC.md`.
 - Firmware output path targets ESP32 DAC (`GPIO25`) for analog feed into PAM8403 input.
 - Microphone path uses MAX9814 module (`41016669`) analog output to `GPIO34`.
 - Speaker parts are `8Ω 0.5W`; firmware clamps output volume conservatively and starts muted.
+- PAM8403 output stage is BTL/floating: do **not** tie speaker `-` to GND and do **not** tie L/R outputs together.
 
 Practical wiring assumptions used by firmware/docs:
 
