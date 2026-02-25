@@ -63,6 +63,7 @@ Host-side arbitration test:
 ## Execution Artifacts
 
 - [PROJECT_SPEC.md](PROJECT_SPEC.md)
+- [SPEC_CONFORMANCE.md](SPEC_CONFORMANCE.md)
 - [CHECKLIST.md](CHECKLIST.md)
 - [BUILD_PLAN.md](BUILD_PLAN.md)
 - [TEST_LOG_TEMPLATE.md](TEST_LOG_TEMPLATE.md)

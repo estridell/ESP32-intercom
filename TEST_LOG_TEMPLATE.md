@@ -29,6 +29,13 @@ Use one entry per executed test run. Keep logs attached (serial output, notes, s
 - Audio observation summary:
 - Reconnect/handover counts (if applicable):
 
+## ACC-011 Preflight Record (Required)
+
+- HFP toolchain status at boot (`ok` or `BLOCKED HFP-TOOLCHAIN`):
+- Audio output backend confirmation (`analog_dac` path to PAM8403 input):
+- Low-battery status (`active` with VBAT sensing, or blocked/pending with reason):
+- USB/LiPo/jumper power-route caveat verified for this run:
+
 ## BOM Audit Checklist (TM-005)
 
 - [ ] ESP32-WROOM-32 DevKit LiPo (SKU 41017634)
