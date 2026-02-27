@@ -33,7 +33,7 @@ Date: 2026-02-25
 | ACC-004 | FR-MODE, NFR-REL-003 | PENDING-DEVICE | Execute and record >=20 call/music handovers. |
 | ACC-005 | FR-PAIR, EC-008, TM-002 | PENDING-DEVICE | Run 5 reboot reconnect attempts and summarize pass rate. |
 | ACC-006 | FR-REC, EC-004, EC-005 | PENDING-DEVICE | Trigger disconnects in music/call and confirm idle + reconnect-ready state. |
-| ACC-007 | FR-OBS | YELLOW | Capture and archive live logs now that logging scaffolding is complete. |
+| ACC-007 | FR-OBS | PENDING-DEVICE | Capture and archive live logs now that logging scaffolding is complete. |
 | ACC-008 | NFR-RES-001, NFR-RES-002 | PENDING-DEVICE | 2-hour mixed-use stress run with reconnect cycles. |
 | ACC-009 | EC-001..EC-009 | PENDING-DEVICE | Execute full edge-case matrix on hardware and record pass/fail. |
 | ACC-010 | HW-001..HW-004, TM-005 | PENDING-DEVICE | Complete per-run BOM audit fields in test logs. |
@@ -43,4 +43,4 @@ Date: 2026-02-25
 
 1. Run quick bench smoke: boot, pair, stream, call, disconnect.
 2. Execute TM matrix runs using `TEST_LOG_TEMPLATE.md` entries per run.
-3. Update `CHECKLIST.md` from `PENDING-DEVICE` to `GREEN/RED` based on recorded evidence.
+3. Update `CHECKLIST.md` from `PENDING-DEVICE` to `GREEN` / `BLOCKED-TOOLCHAIN` / `GAP` based on recorded evidence.
