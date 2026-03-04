@@ -36,6 +36,8 @@ static constexpr uint32_t kDiscoverableRefreshMs = 15000;
 static constexpr uint32_t kBootBondClearHoldMs = 3000;
 static constexpr uint32_t kStartupMuteMs = 300;
 static constexpr int32_t kRampStepQ15 = 256;          // gain ramp step per loop
+static constexpr int32_t kAnalogHeadroomQ15 = 9830;   // ~30% full-scale at max logical volume
+static constexpr uint32_t kAudioIdleSilenceMs = 120;  // force DAC midpoint when stream stalls
 
 // Practical default wiring pins for ESP32-WROOM-32 DevKit.
 static constexpr int PIN_SPKR_DAC = 25;               // DAC1 / GPIO25 -> PAM8403 IN
@@ -61,6 +63,8 @@ enum class FatalCode {
   A2DP_INIT = 7,
   AVRCP_INIT = 8,
   HFP_INIT = 9,
+  GAP_INIT = 10,
+  GAP_CFG = 11,
 };
 
 // -------------------------- Runtime globals --------------------------
@@ -79,6 +83,7 @@ static volatile int32_t gTargetGainQ15 = 0;
 static volatile int32_t gCurrentGainQ15 = 0;
 static volatile bool gStartupMuteReleased = false;
 static volatile bool gAvrcpVolumeRnRegistered = false;
+static volatile uint32_t gLastAudioWriteMs = 0;
 
 static bool gShouldClearBonds = false;
 static uint32_t gBootMs = 0;
@@ -91,6 +96,13 @@ static bool gHfpPathBlocked = false;
 static bool gLowBatteryFeatureBlocked = false;
 static bool gLowBatteryWarningLatched = false;
 static uint32_t gLastLowBatteryLogMs = 0;
+#if HAVE_HFP_CLIENT
+static esp_bd_addr_t gPeerBda = {0};
+static bool gPeerBdaValid = false;
+static uint32_t gLastHfpConnectAttemptMs = 0;
+static uint32_t gLastHfpAudioAttemptMs = 0;
+static bool gHfpConnectInFlight = false;
+#endif
 
 // -------------------------- Utilities --------------------------
 static void fatalHalt(FatalCode code, const char *detail) {
@@ -144,6 +156,47 @@ static uint8_t clampVolumeAbs(uint8_t req) {
   return req > kSafeMaxVolumeAbs ? kSafeMaxVolumeAbs : req;
 }
 
+#if HAVE_HFP_CLIENT
+static void rememberPeerBda(const esp_bd_addr_t remote) {
+  if (!remote) return;
+  memcpy(gPeerBda, remote, ESP_BD_ADDR_LEN);
+  gPeerBdaValid = true;
+}
+
+static void maybeConnectHfp(const char *reason) {
+  if (gHfpPathBlocked || !gPeerBdaValid || gHfpLinkConnected) return;
+  const uint32_t now = millis();
+  if (now - gLastHfpConnectAttemptMs < 4000) return;
+
+  gLastHfpConnectAttemptMs = now;
+  gHfpConnectInFlight = true;
+  const esp_err_t err = esp_hf_client_connect(gPeerBda);
+  if (err != ESP_OK) {
+    gHfpConnectInFlight = false;
+    logRecoverable("hfp_connect", err);
+  } else {
+    Serial.printf("BT HFP connect requested (%s)\n", reason);
+  }
+}
+
+static void maybeConnectHfpAudio(const char *reason) {
+  if (gHfpPathBlocked || !gPeerBdaValid || !gHfpLinkConnected) return;
+  const uint32_t now = millis();
+  if (now - gLastHfpAudioAttemptMs < 2000) return;
+
+  gLastHfpAudioAttemptMs = now;
+  const esp_err_t err = esp_hf_client_connect_audio(gPeerBda);
+  if (err != ESP_OK) {
+    // Many AG stacks auto-open SCO; INVALID_STATE can be harmless if already opening/connected.
+    if (err != ESP_ERR_INVALID_STATE) {
+      logRecoverable("hfp_connect_audio", err);
+    }
+  } else {
+    Serial.printf("BT HFP audio requested (%s)\n", reason);
+  }
+}
+#endif
+
 static uint8_t getVolumeAbs() {
   portENTER_CRITICAL(&gMux);
   const uint8_t v = gVolumeAbs;
@@ -153,7 +206,8 @@ static uint8_t getVolumeAbs() {
 
 static int32_t volumeToQ15(uint8_t volAbs) {
   if (kSafeMaxVolumeAbs == 0) return 0;
-  return (static_cast<int32_t>(volAbs) * 32767) / static_cast<int32_t>(kSafeMaxVolumeAbs);
+  const int32_t fullScale = (static_cast<int32_t>(volAbs) * 32767) / static_cast<int32_t>(kSafeMaxVolumeAbs);
+  return (fullScale * kAnalogHeadroomQ15) / 32767;
 }
 
 #if defined(ESP_AVRC_RN_VOLUME_CHANGE) && defined(ESP_AVRC_RN_RSP_INTERIM) && \
@@ -260,17 +314,6 @@ static void setCallActive(bool value) {
   portEXIT_CRITICAL(&gMux);
 }
 
-static bool okOrAlreadyInitialized(const char *label, esp_err_t err) {
-  if (err == ESP_OK) {
-    return true;
-  }
-  if (err == ESP_ERR_INVALID_STATE) {
-    Serial.printf("INFO %s already initialized (ESP_ERR_INVALID_STATE)\n", label);
-    return true;
-  }
-  return false;
-}
-
 static void setHandsFreeClassOfDevice() {
 #if defined(ESP_BT_SET_COD_MAJOR_MINOR) && defined(ESP_BT_COD_MAJOR_DEV_AUDIO_VIDEO)
   esp_bt_cod_t cod{};
@@ -358,10 +401,24 @@ static uint8_t pcm16ToDac8(int16_t sample) {
   return static_cast<uint8_t>(shifted);
 }
 
+static void markAudioWriteNow() {
+  portENTER_CRITICAL(&gMux);
+  gLastAudioWriteMs = millis();
+  portEXIT_CRITICAL(&gMux);
+}
+
+static uint32_t getLastAudioWriteMs() {
+  portENTER_CRITICAL(&gMux);
+  const uint32_t t = gLastAudioWriteMs;
+  portEXIT_CRITICAL(&gMux);
+  return t;
+}
+
 static inline void writeAnalogSample(int16_t sample) {
   if (!gOutputPathReady) return;
 #if HAVE_ANALOG_DAC
   dac_output_voltage(DAC_CHANNEL_1, pcm16ToDac8(sample));
+  markAudioWriteNow();
 #else
   (void)sample;
 #endif
@@ -371,14 +428,18 @@ static void writeAnalogStereoPcm(const int16_t *samples, size_t sampleCount, int
   if (!samples || sampleCount < 2 || !gOutputPathReady) return;
 
   static uint8_t decim = 0;
+  static int32_t accum = 0;
   for (size_t i = 0; i + 1 < sampleCount; i += 2) {
     const int16_t l = applyGainQ15(samples[i], gainQ15);
     const int16_t r = applyGainQ15(samples[i + 1], gainQ15);
     const int16_t mono = static_cast<int16_t>((static_cast<int32_t>(l) + static_cast<int32_t>(r)) / 2);
+    accum += mono;
     decim++;
     if (decim >= kMusicDownsampleFactor) {
+      const int16_t averaged = static_cast<int16_t>(accum / static_cast<int32_t>(decim));
+      accum = 0;
       decim = 0;
-      writeAnalogSample(mono);
+      writeAnalogSample(averaged);
     }
   }
 }
@@ -387,12 +448,16 @@ static void writeAnalogMonoPcm(const int16_t *samples, size_t sampleCount, int32
   if (!samples || sampleCount == 0 || !gOutputPathReady) return;
 
   static uint8_t decim = 0;
+  static int32_t accum = 0;
   for (size_t i = 0; i < sampleCount; ++i) {
     const int16_t s = applyGainQ15(samples[i], gainQ15);
+    accum += s;
     decim++;
     if (decim >= kCallDownsampleFactor) {
+      const int16_t averaged = static_cast<int16_t>(accum / static_cast<int32_t>(decim));
+      accum = 0;
       decim = 0;
-      writeAnalogSample(s);
+      writeAnalogSample(averaged);
     }
   }
 }
@@ -403,6 +468,20 @@ static void silenceAudioOutput() {
     dac_output_voltage(DAC_CHANNEL_1, 128);
   }
 #endif
+}
+
+static void guardAudioIdleWhine() {
+  if (!gOutputPathReady) return;
+  const AudioMode mode = getActiveMode();
+  if (mode == AudioMode::IDLE) return;
+
+  const uint32_t lastWriteMs = getLastAudioWriteMs();
+  if (lastWriteMs == 0) return;
+
+  const uint32_t now = millis();
+  if (now - lastWriteMs > kAudioIdleSilenceMs) {
+    silenceAudioOutput();
+  }
 }
 
 static int readBatteryMillivolts() {
@@ -526,7 +605,11 @@ static void a2dpEventCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *para
       const int state = param->conn_stat.state;
       Serial.printf("BT A2DP conn_state=%d\n", state);
       if (state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
+        rememberPeerBda(param->conn_stat.remote_bda);
         setA2dpLinkConnected(true);
+#if HAVE_HFP_CLIENT
+        maybeConnectHfp("a2dp_connected");
+#endif
       } else if (state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
         setA2dpLinkConnected(false);
         setMusicActive(false);
@@ -654,9 +737,11 @@ static void hfpClientCallback(esp_hf_client_cb_event_t event, esp_hf_client_cb_p
   switch (event) {
     case ESP_HF_CLIENT_CONNECTION_STATE_EVT:
       Serial.printf("BT HFP conn_state=%d\n", param->conn_stat.state);
+      rememberPeerBda(param->conn_stat.remote_bda);
       {
         const bool linked = hfpConnectionStateIsLinked(param->conn_stat.state);
         setHfpLinkConnected(linked);
+        gHfpConnectInFlight = false;
         if (!linked) {
           setCallActive(false);
         }
@@ -664,6 +749,9 @@ static void hfpClientCallback(esp_hf_client_cb_event_t event, esp_hf_client_cb_p
       if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
         setDiscoverableConnectable();
         Serial.println("REC HFP disconnected, discoverable restored");
+        if (gA2dpLinkConnected) {
+          maybeConnectHfp("hfp_retry_after_disconnect");
+        }
       }
       break;
     case ESP_HF_CLIENT_AUDIO_STATE_EVT: {
@@ -672,6 +760,20 @@ static void hfpClientCallback(esp_hf_client_cb_event_t event, esp_hf_client_cb_p
       setCallActive(hfpAudioStateIsActive(state));
       break;
     }
+#ifdef ESP_HF_CLIENT_CIND_CALL_SETUP_EVT
+    case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT:
+      if (param->call_setup.status != ESP_HF_CALL_SETUP_STATUS_IDLE) {
+        maybeConnectHfpAudio("call_setup");
+      }
+      break;
+#endif
+#ifdef ESP_HF_CLIENT_CIND_CALL_EVT
+    case ESP_HF_CLIENT_CIND_CALL_EVT:
+      if (param->call.status == ESP_HF_CALL_STATUS_CALL_IN_PROGRESS) {
+        maybeConnectHfpAudio("call_active");
+      }
+      break;
+#endif
     default:
       // Keep compatibility if callback enum set differs by core/IDF version.
       Serial.printf("BT HFP evt=%d\n", static_cast<int>(event));
@@ -686,6 +788,10 @@ static void gapCallback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *para
       if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
         Serial.println("BT GAP auth complete");
         enforceSingleBond(param->auth_cmpl.bda);
+#if HAVE_HFP_CLIENT
+        rememberPeerBda(param->auth_cmpl.bda);
+        maybeConnectHfp("auth_complete");
+#endif
       } else {
         Serial.printf("WARN auth_failed stat=%d\n", param->auth_cmpl.stat);
       }
@@ -712,39 +818,37 @@ static void initBluetoothOrHalt() {
     fatalHalt(FatalCode::NVS_INIT, "nvs_flash_init");
   }
 
-  err = esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
-  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-    logRecoverable("bt_mem_release_ble", err);
+  if (!btStarted() && !btStart()) {
+    fatalHalt(FatalCode::BT_CTRL_ENABLE, "btStart");
   }
 
-  esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-  err = esp_bt_controller_init(&bt_cfg);
-  if (!okOrAlreadyInitialized("esp_bt_controller_init", err)) {
-    fatalHalt(FatalCode::BT_CTRL_INIT, "esp_bt_controller_init");
+  esp_bluedroid_status_t bdStatus = esp_bluedroid_get_status();
+  if (bdStatus == ESP_BLUEDROID_STATUS_UNINITIALIZED) {
+    err = esp_bluedroid_init();
+    if (err != ESP_OK) {
+      fatalHalt(FatalCode::BLUEDROID_INIT, "esp_bluedroid_init");
+    }
+    bdStatus = esp_bluedroid_get_status();
   }
-
-  err = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
-  if (!okOrAlreadyInitialized("esp_bt_controller_enable", err)) {
-    fatalHalt(FatalCode::BT_CTRL_ENABLE, "esp_bt_controller_enable");
+  if (bdStatus == ESP_BLUEDROID_STATUS_INITIALIZED) {
+    err = esp_bluedroid_enable();
+    if (err != ESP_OK) {
+      fatalHalt(FatalCode::BLUEDROID_ENABLE, "esp_bluedroid_enable");
+    }
+    bdStatus = esp_bluedroid_get_status();
   }
-
-  err = esp_bluedroid_init();
-  if (!okOrAlreadyInitialized("esp_bluedroid_init", err)) {
-    fatalHalt(FatalCode::BLUEDROID_INIT, "esp_bluedroid_init");
-  }
-  err = esp_bluedroid_enable();
-  if (!okOrAlreadyInitialized("esp_bluedroid_enable", err)) {
-    fatalHalt(FatalCode::BLUEDROID_ENABLE, "esp_bluedroid_enable");
+  if (bdStatus != ESP_BLUEDROID_STATUS_ENABLED) {
+    fatalHalt(FatalCode::BLUEDROID_ENABLE, "bluedroid_not_enabled");
   }
 
   err = esp_bt_gap_register_callback(gapCallback);
   if (err != ESP_OK) {
-    logRecoverable("gap_register_callback", err);
+    fatalHalt(FatalCode::GAP_INIT, "gap_register_callback");
   }
 
   err = esp_bt_dev_set_device_name(kDeviceName);
   if (err != ESP_OK) {
-    logRecoverable("set_device_name", err);
+    fatalHalt(FatalCode::GAP_CFG, "set_device_name");
   }
   setHandsFreeClassOfDevice();
 
@@ -756,36 +860,36 @@ static void initBluetoothOrHalt() {
   pin_code[3] = '0';
   err = esp_bt_gap_set_pin(pin_type, 4, pin_code);
   if (err != ESP_OK) {
-    logRecoverable("gap_set_pin", err);
+    fatalHalt(FatalCode::GAP_CFG, "gap_set_pin");
   }
 
   err = esp_a2d_register_callback(a2dpEventCallback);
-  if (!okOrAlreadyInitialized("esp_a2d_register_callback", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::A2DP_INIT, "a2d_register_callback");
   }
   err = esp_a2d_sink_register_data_callback(a2dpDataCallback);
-  if (!okOrAlreadyInitialized("esp_a2d_sink_register_data_callback", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::A2DP_INIT, "a2d_sink_register_data_callback");
   }
   err = esp_a2d_sink_init();
-  if (!okOrAlreadyInitialized("esp_a2d_sink_init", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::A2DP_INIT, "a2d_sink_init");
   }
 
   err = esp_avrc_ct_init();
-  if (!okOrAlreadyInitialized("esp_avrc_ct_init", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::AVRCP_INIT, "avrc_ct_init");
   }
   err = esp_avrc_ct_register_callback(avrcControllerCallback);
-  if (!okOrAlreadyInitialized("esp_avrc_ct_register_callback", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::AVRCP_INIT, "avrc_ct_register_callback");
   }
   err = esp_avrc_tg_init();
-  if (!okOrAlreadyInitialized("esp_avrc_tg_init", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::AVRCP_INIT, "avrc_tg_init");
   }
   err = esp_avrc_tg_register_callback(avrcTargetCallback);
-  if (!okOrAlreadyInitialized("esp_avrc_tg_register_callback", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::AVRCP_INIT, "avrc_tg_register_callback");
   }
   configureAvrcpVolumeNotificationCapability();
@@ -793,15 +897,15 @@ static void initBluetoothOrHalt() {
 #if HAVE_HFP_CLIENT
   gHfpPathBlocked = false;
   err = esp_hf_client_register_callback(hfpClientCallback);
-  if (!okOrAlreadyInitialized("esp_hf_client_register_callback", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::HFP_INIT, "hfp_register_callback");
   }
   err = esp_hf_client_register_data_callback(hfpIncomingAudioCallback, hfpOutgoingAudioCallback);
-  if (!okOrAlreadyInitialized("esp_hf_client_register_data_callback", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::HFP_INIT, "hfp_register_data_callback");
   }
   err = esp_hf_client_init();
-  if (!okOrAlreadyInitialized("esp_hf_client_init", err)) {
+  if (err != ESP_OK) {
     fatalHalt(FatalCode::HFP_INIT, "hfp_init");
   }
 #else
@@ -951,6 +1055,12 @@ void loop() {
 
   updateModeArbitration();
   updateGainRamp();
+  guardAudioIdleWhine();
+#if HAVE_HFP_CLIENT
+  if (!gHfpLinkConnected && gA2dpLinkConnected && !gHfpConnectInFlight) {
+    maybeConnectHfp("periodic_retry");
+  }
+#endif
   updateLowBatteryProtection();
   keepDiscoverableIfNeeded();
   heartbeatLog();
